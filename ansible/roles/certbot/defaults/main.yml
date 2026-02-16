@@ -1,0 +1,6 @@
+---
+certbot_email: admin@example.com
+
+certbot_generate_and_issue_cert: false
+certbot_cert_access_group: cert-access
+certbot_domains: "{{ acme_dns_reg_cert_domains }}"

@@ -1,0 +1,12 @@
+---
+acme_dns_client_url: https://github.com/acme-dns/acme-dns-client/releases/download/v0.3/acme-dns-client_0.3_linux_amd64.tar.gz
+acme_dns_client_dest: /root/acme-dns-client_0.3_linux_amd64.tar.gz
+acme_dns_client_checksum: sha256:f7b1892ee9ce2eb22d9d3b5bd8d03d01e2660661d7d461da512f60cca64ae3ef
+# curl https://github.com/acme-dns/acme-dns-client/releases/download/v0.3/acme-dns-client_0.3_linux_amd64.tar.gz | sha256sum
+# checksum: sha256:https://github.com/acme-dns/acme-dns-client/releases/download/v0.3/acme-dns-client_0.3_checksums.txt
+
+# acme_dns_client_url: https://github.com/acme-dns/acme-dns-client/releases/download/v0.3/acme-dns-client_0.3_linux_arm64.tar.gz
+# acme_dns_client_dest: /root/acme-dns-client_0.3_linux_arm64.tar.gz
+# acme_dns_client_checksum: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+# # curl https://github.com/acme-dns/acme-dns-client/releases/download/v0.3/acme-dns-client_0.3_linux_arm64.tar.gz | sha256sum
+# # checksum: sha256:https://github.com/acme-dns/acme-dns-client/releases/download/v0.3/acme-dns-client_0.3_checksums.txt

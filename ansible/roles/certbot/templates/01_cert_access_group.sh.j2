@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# {{ ansible_managed }}
+# Used by certbot for Let's Encrypt SSL certificate validation
+
+# On successful deploy, make sure files are accessible to cert access group
+
+# Set the group on all files and directories recursively
+chown -R root:{{ certbot_cert_access_group }} /etc/letsencrypt
+
+# Make all files and directories readable by the group
+chmod -R g+r /etc/letsencrypt
+
+# Make all directories executable so that the group can access/traverse directories
+find /etc/letsencrypt -type d -exec chmod g+x {} +

@@ -1,0 +1,16 @@
+---
+acme_dns_reg_cert_domains: []
+# acme_dns_reg_cert_domains:
+#   - test.example.com
+#   - test2.example.com
+acme_dns_reg_run_registration: false
+
+acme_dns_credentials: /etc/acmedns/clientstorage.json
+acme_dns_reg_registered_domains_dir: /etc/acme_dns_reg/domains
+
+acme_dns_replicate_registration: []
+# acme_dns_replicate_registration:
+#   - source_host: test1
+#     domain: shared.example.com
+
+acme_dns_api_url: https://my-acme-dns-server.example.com

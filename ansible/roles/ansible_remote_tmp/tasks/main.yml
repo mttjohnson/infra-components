@@ -1,0 +1,8 @@
+---
+- name: create directories for remote_tmp
+  ansible.builtin.file:
+    path: /root/.ansible/tmp
+    mode: "0700"
+    owner: root
+    group: root
+    state: directory

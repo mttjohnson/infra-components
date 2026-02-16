@@ -1,0 +1,32 @@
+---
+
+# nvme0n1     259:0    0 953.9G  0 disk 
+# ├─nvme0n1p1 259:1    0     1G  0 part /boot/efi
+# └─nvme0n1p2 259:2    0   100G  0 part /
+
+- name: "apt :: install required packages"
+  ansible.builtin.package:
+    name:
+      - parted
+    state: present
+  register: partition_apt_packages
+
+- name: Read device information (always use unit when probing)
+  community.general.parted: 
+    device: "{{ partition_device }}"
+    unit: MiB
+  register: device_info
+  ignore_errors: "{{ ansible_check_mode and partition_apt_packages.changed }}"
+
+- name: Create a new partition to fill the rest of the disk
+  community.general.parted:
+    device: "{{ partition_device }}"
+    number: "{{ partition_end_partition_number }}"
+    part_start: "{{ device_info.partitions[(device_info.partitions|length) -1].end + 1}}MiB"
+    part_end: "100%"
+    part_type: primary
+    label: "{{ partition_label }}"
+    name: "{{ (partition_label == 'gpt') | ternary(partition_name, '') }}"
+    unit: MiB
+    state: present
+  ignore_errors: "{{ ansible_check_mode and partition_apt_packages.changed }}"

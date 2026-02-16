@@ -1,0 +1,31 @@
+---
+- name: Install snapd
+  ansible.builtin.package:
+    name: snapd
+    state: present
+  register: certbot_install_snapd
+
+- name: Check for snap packages to update
+  ansible.builtin.command: snap refresh --list
+  register: snap_refresh_list
+  check_mode: false
+  changed_when: false
+
+- name: Results of snap refresh list
+  ansible.builtin.debug:
+      msg: "{{ snap_refresh_list }}"
+  when: 
+    snap_refresh_list.stderr != "All snaps up to date."
+
+# Update all installed snap packages
+- name: Update all installed snap packages
+  ansible.builtin.command: snap refresh
+  when:
+    snap_refresh_list.stderr != "All snaps up to date."
+  register: snap_refresh
+
+- name: Results of snap refresh
+  ansible.builtin.debug:
+      msg: "{{ snap_refresh }}"
+  when: 
+    snap_refresh.changed

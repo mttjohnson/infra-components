@@ -1,0 +1,10 @@
+# man sources.list
+# deb822 style format
+
+Enabled: yes
+Types: deb
+URIs: https://pkgs.zabbly.com/incus/{{ incus_release }}/
+Suites: {{ ansible_facts["distribution_release"] }}
+Components: main
+Architectures: {{ dpkg_architecture.stdout }}
+Signed-By: /usr/share/keyrings/zabbly.gpg

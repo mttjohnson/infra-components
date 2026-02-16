@@ -1,0 +1,30 @@
+---
+
+- name: create certbot deploy hook directory
+  ansible.builtin.file:
+    path: "/etc/letsencrypt/renewal-hooks/deploy/"
+    owner: root
+    group: "{{ certbot_cert_access_group | default('root', true) }}"
+    mode: "0755"
+    state: directory
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: certbot deploy hook - incus reload deploy hook
+  ansible.builtin.template:
+    src: 02_incus_reload.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/02_incus_reload.sh
+    owner: root
+    group: "{{ certbot_cert_access_group | default('root', true) }}"
+    mode: "0740"
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: incus_use_certbot_deploy_hook_incus_reload
+
+- name: certbot deploy hook - update incus cluster cert deploy hook
+  ansible.builtin.template:
+    src: 03_update_cluster_cert.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/03_update_cluster_cert.sh
+    owner: root
+    group: "{{ certbot_cert_access_group | default('root', true) }}"
+    mode: "0740"
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: incus_use_certbot_deploy_hook_update_cluster_cert

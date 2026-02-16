@@ -1,0 +1,27 @@
+---
+network_interface_name: eno1
+network_external_address: 10.0.0.0
+network_external_address_cidr: /24
+network_default_route: 10.0.0.0
+network_dns_search: [ local ]
+network_dns_address: [ 10.0.0.0 ]
+
+network_netplan_template: netplan-config.yaml.j2
+
+network_netplan_ethernets_list:
+  - key: "{{ network_interface_name }}"
+    value: 
+      dhcp4: false
+      dhcp6: false
+      addresses: [ "{{ network_external_address }}{{ network_external_address_cidr }}" ]
+      routes: 
+        - to: default
+          via: "{{ network_default_route }}"
+      nameservers:
+        search: "{{ network_dns_search }}"
+        addresses: "{{ network_dns_address }}"
+
+network_netplan_config:
+  network: 
+    version: 2
+    ethernets: "{{ network_netplan_ethernets_list | items2dict }}"

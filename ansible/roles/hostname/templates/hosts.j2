@@ -1,0 +1,21 @@
+127.0.0.1 localhost
+
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+ff02::3 ip6-allhosts
+
+# Ansible Generated Hosts Entries 
+{% for item in hostsfile_hosts | sort %}
+{% if item in hostvars.keys() and hostvars[item]['ansible_default_ipv4'] is defined %}
+{{ hostvars[item]['ansible_default_ipv4']['address'] }} {{ hostvars[item]['ansible_nodename'] }} {{ hostvars[item]['ansible_hostname'] }}
+{% endif %}
+{% endfor %}
+
+# Additional Ansible Host Entries
+{% for item in additional_hostsfile_hosts | sort(attribute='hostname') %}
+{{ item.ip }} {{ item.hostname }}
+{% endfor %}

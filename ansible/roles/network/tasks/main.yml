@@ -1,0 +1,90 @@
+---
+
+- name: "snap :: install utilities"
+  community.general.snap:
+    name:
+      - yq
+    state: present
+
+- name: "network packages"
+  ansible.builtin.package:
+    name:
+      - bridge-utils
+    state: present
+    
+- name: overwrite installer network netplan config
+  ansible.builtin.template:
+    src: "{{ network_netplan_template }}"
+    dest: /etc/netplan/00-installer-config.yaml
+    owner: root
+    group: root
+    mode: 0600
+    backup: true
+  register: netplan_config
+
+# validate yaml file
+- name: Check config file yaml syntax
+  ansible.builtin.shell: |
+    cat /etc/netplan/00-installer-config.yaml | yq eval > /dev/null
+  register: yaml_validation
+  when: netplan_config.changed
+
+
+
+- name: generate netplan configurations
+  ansible.builtin.command: netplan generate
+  register: netplan_generate
+  when: netplan_config.changed
+
+- name: results of (generate netplan configurations)
+  ansible.builtin.debug:
+    msg: "{{ netplan_generate.stdout }}"
+  when: netplan_config.changed
+
+
+
+
+- name: Apply netplan configurations
+  ansible.builtin.command: netplan apply
+  register: netplan_apply
+  async: "{{ ansible_check_mode | ternary(0, 100) }}" # Using "fire-and-forget" asynchronous execution for this task, otherwise it will always fail and timeout
+  poll: 0
+  when: netplan_config.changed
+
+- name: Change ansible's ip address for the host
+  set_fact:
+    ansible_host: "{{ ansible_check_mode | ternary(ansible_host, network_external_address) }}"
+  when: netplan_config.changed
+
+- name: results of (ansible_host)
+  ansible.builtin.debug:
+    msg: "ansible_host: {{ ansible_host }}"
+  when: netplan_config.changed
+
+
+
+
+- name: Wait for the hosts network interface to come back up (wait_for)
+  delegate_to: localhost # Execute locally, not on the remote server
+  become: no # Disable any use of sudo for this task when running local commands
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}" 
+    port: 22
+    state: started
+    timeout: 60
+    connect_timeout: 60
+  when: netplan_config.changed
+
+
+
+
+- name: get netplan status
+  ansible.builtin.command: netplan status --all
+  register: netplan_status
+  check_mode: false
+  changed_when: false
+
+- name: results of (netplan status)
+  ansible.builtin.debug:
+    msg: |
+      {{ netplan_status.stdout_lines }}

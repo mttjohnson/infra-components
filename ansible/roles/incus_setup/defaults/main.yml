@@ -1,0 +1,55 @@
+---
+incus_release: stable # daily stable lts-6.0
+
+# ansible_distribution_release: jammy # focal jammy noble bullseye bookworm
+# echo "$(. /etc/os-release && echo ${VERSION_CODENAME})"
+
+incus_ip_address: "{{ ansible_host }}"
+incus_https_port: 443
+
+incus_lvm_global_filter_list: |-
+  [ "r|/dev/zd.*|" ]
+
+incus_cert_path: /var/lib/incus/server.crt
+incus_key_path: /var/lib/incus/server.key
+incus_cert_sym_src: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/fullchain.pem"
+incus_key_sym_src: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/privkey.pem"
+
+incus_externally_managed_certs:
+  - cert: "{{ incus_cert_path }}"
+    key: "{{ incus_key_path }}"
+    cert_sym_target: "{{ incus_cert_sym_src }}"
+    key_sym_target: "{{ incus_key_sym_src }}"
+  # - cert: /var/lib/incus/cluster.crt
+  #   key: /var/lib/incus/cluster.key
+  #   cert_sym_target: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/fullchain.pem"
+  #   key_sym_target: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/privkey.pem"
+
+# -- old key expired: 2025-08-22
+# incus_setup_zabbly_gpg_key_url: https://pkgs.zabbly.com/key.asc
+# incus_setup_zabbly_gpg_key_download_path: /root/zabbly.asc
+# # curl -fsSL https://pkgs.zabbly.com/key.asc | sha256sum
+# incus_setup_zabbly_gpg_key_checksum: sha256:6b0ca4f477a86bc059b4c370d210e2fa1a18580f9b56dd6c1f1d39aca738a9dc
+# # curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --import-options show-only --import
+# incus_setup_zabbly_gpg_key_fingerprint: 4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+# # pub   rsa3072 2023-08-23 [SC] [expired: 2025-08-22]
+# #       4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+# # uid                      Zabbly Kernel Builds <info@zabbly.com>
+
+incus_setup_zabbly_gpg_key_url: https://pkgs.zabbly.com/key.asc
+incus_setup_zabbly_gpg_key_download_path: /root/zabbly.asc
+# curl -fsSL https://pkgs.zabbly.com/key.asc | sha256sum
+incus_setup_zabbly_gpg_key_checksum: sha256:f1adb44fdf82083f983a392b5b406d34e473dce3d66a51de3118cdc1f51d3f87
+# curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --import-options show-only --import
+incus_setup_zabbly_gpg_key_fingerprint: 4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+# pub   rsa3072 2023-08-23 [SC] [expires: 2030-08-17]
+#       4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+# uid                      Zabbly Kernel Builds <info@zabbly.com>
+# sub   rsa3072 2023-08-23 [E] [expires: 2030-08-17]
+
+# The recommended locations for keyrings are /usr/share/keyrings for keyrings managed by
+# packages, and /etc/apt/keyrings for keyrings managed by the system operator.
+incus_setup_zabbly_gpg_key_install_path: /usr/share/keyrings/zabbly.gpg
+
+incus_use_certbot_deploy_hook_incus_reload: false
+incus_use_certbot_deploy_hook_update_cluster_cert: false

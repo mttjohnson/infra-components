@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+# {{ ansible_managed }}
+
+# On successful deploy, update the incus cluster with the new cert, fingerprint, and expiration.
+# Incus uses this for cluster authentication so we need to add the new one before restarting incus
+# Certbot generates a new key on renewal which alters any fingerprint that Incus may use for 
+# authentication aside from the expiration date
+
+echo "getting details about new cert"
+incus_fqdn=$(hostname --fqdn)
+cert_fingerprint=$(cat "/etc/letsencrypt/live/${incus_fqdn}/cert.pem" | openssl x509 -outform DER | openssl dgst -sha256 | awk '{print $2}')
+
+echo "getting details about old cert"
+incus_hostname=$(hostname --short)
+old_cert_fingerprint=$(incus admin sql global "SELECT fingerprint FROM certificates where name = '${incus_hostname}';" --format json | jq -r '.rows[0][0]')
+
+# Incus doesn't have an option to add a new type server cert from the cli, but we can add a client cert and then change the type in the database
+echo "adding trust for certificate"
+incus config trust add-certificate "/etc/letsencrypt/live/${incus_fqdn}/cert.pem" --name="${incus_hostname}"
+echo "changing trusted certificate to server type"
+# Incus does not seem to like having two server certs for the same server, so we need to update both and swap the types on each in a single command
+incus admin sql global "
+UPDATE certificates SET type = 1 WHERE fingerprint = '${old_cert_fingerprint}' AND name = '${incus_hostname}' AND type = 2;
+UPDATE certificates SET type = 2 WHERE fingerprint = '${cert_fingerprint}' AND name = '${incus_hostname}' AND type = 1;
+"
+
+# If there was an old cert fingerprint we can remove it now
+if [[ -n "${old_cert_fingerprint}" && "${old_cert_fingerprint}" != "${cert_fingerprint}" ]]; then
+    echo "removing old server trust certificate"
+    incus config trust remove "${old_cert_fingerprint}"
+fi
+
+# Now that we have the new cert loaded for authentication we can restart incus with the new cert/key
+echo "restarting incus"
+systemctl restart incus

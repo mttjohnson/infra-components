@@ -1,0 +1,31 @@
+---
+- name: check ansible version
+  # Specified for all hosts along with local connection to function with vagrant provision
+  hosts: all
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Define the supported ansible version requirements of these playbooks
+    # ansible_version_require_min: "2.20.1"         # Example "2.12" or "2"
+    # ansible_version_require_min_operator: ">="  # Example ">=" or ">"
+    # ansible_version_require_max: "2.21"            # Example "2.13" or "3"
+    # ansible_version_require_max_operator: "<"   # Example "<=" or "<"
+
+  tasks:
+    - name: Display Ansible Version and Requirement
+      ansible.builtin.debug:
+        msg:
+          - Current Ansible Version {{ ansible_version.string }}
+          - Requirement is {{ ansible_version_require_min_operator }} {{ ansible_version_require_min }} and {{ ansible_version_require_max_operator }} {{ ansible_version_require_max }}
+      tags: [always]
+
+    - name: Checking Ansible Version Requirements (skipped if requirements match)
+      when:
+        ansible_version.string is not version(ansible_version_require_min, ansible_version_require_min_operator) or
+        ansible_version.string is not version(ansible_version_require_max, ansible_version_require_max_operator)
+      fail:
+        msg: |
+          Please use Ansible versions {{ ansible_version_require_min_operator }} {{ ansible_version_require_min }} and {{ ansible_version_require_max_operator }} {{ ansible_version_require_max }} only.
+          see /docs/setup.md for installation and upgrade details
+      tags: [always]

@@ -1,0 +1,23 @@
+# This is the network config is managed via Ansible
+# https://netplan.readthedocs.io/en/stable/netplan-yaml/
+network:
+  version: 2
+  ethernets:
+    {{ network_interface_name }}:
+      dhcp4: false
+      dhcp6: false
+  bridges:
+    externalbr0:
+      dhcp4: false
+      dhcp6: false
+      interfaces: [ {{ network_interface_name }} ]
+      addresses: [ {{ network_external_address }}{{ network_external_address_cidr }} ]
+      routes: 
+        - to: default
+          via: {{ network_default_route }}
+      nameservers:
+        search: {{ network_dns_search }}
+        addresses: {{ network_dns_address }}
+      parameters:
+        stp: false
+        forward-delay: 0

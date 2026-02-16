@@ -1,0 +1,102 @@
+---
+# - name: Script Dependencies (snaps)
+#   community.general.snap:
+#     name:
+#       - curl
+#       - jq
+
+- name: Script Dependencies (apt packages)
+  ansible.builtin.package:
+    name:
+      - jq
+      - curl
+    state: present
+
+- name: Deploy acme_dns_reg from template
+  ansible.builtin.template:
+    src: acme_dns_reg.j2
+    dest: /usr/bin/acme_dns_reg
+    owner: root
+    group: root
+    mode: '0755'
+
+# Make sure expected acme-dns-client files and directories exist
+- name: create /etc/acmedns dir
+  ansible.builtin.file:
+    path: /etc/acmedns
+    owner: root
+    group: root
+    mode: 0750
+    state: directory
+
+- name: acme-dns-client storage file
+  ansible.builtin.stat:
+    path: "{{ acme_dns_credentials }}"
+  register: acme_dns_client_storage_stat
+
+- name: create clientstorage.json
+  ansible.builtin.file:
+    path: "{{ acme_dns_credentials }}"
+    owner: root
+    group: root
+    mode: 0640
+    state: touch
+  when: not acme_dns_client_storage_stat.stat.exists
+
+# Only call registration on domains we don't already have listed in the acme_dns_reg_registered_domains_dir
+- name: registered domains stats
+  ansible.builtin.stat:
+    path: "{{ acme_dns_reg_registered_domains_dir }}/{{ item }}"
+    get_checksum: no
+  register: acme_dns_reg_cert_domains_stat
+  loop: "{{ acme_dns_reg_cert_domains }}"
+
+# - name: output of registered domain stats
+#   ansible.builtin.debug:
+#     msg: |
+#       {{ acme_dns_reg_cert_domains_stat }}
+#   ignore_errors: "{{ ansible_check_mode }}"
+
+- name: output of each registered domain stats
+  ansible.builtin.debug:
+    msg: |
+      domain: {{ acme_dns_reg_cert_domains_stat.results|selectattr('item', 'eq', item) | map(attribute='item') | first }}
+      is registered: {{ acme_dns_reg_cert_domains_stat.results|selectattr('item', 'eq', item) | map(attribute='stat.exists') | first }}
+  ignore_errors: "{{ ansible_check_mode }}"
+  loop: "{{ acme_dns_reg_cert_domains }}"
+  # when: (acme_dns_reg_cert_domains_stat.results|selectattr('item', 'eq', item) | map(attribute='stat.exists') | first) == false
+
+# call acme_dns_reg when variable is set to run and the registraiton file does not already exist
+- name: Run acme_dns_reg for each domain
+  ansible.builtin.shell: |
+    acme_dns_reg {{ item }}
+  register: run_acme_dns_reg
+  loop: "{{ acme_dns_reg_cert_domains }}"
+  when: 
+    - acme_dns_reg_run_registration
+    - (acme_dns_reg_cert_domains_stat.results|selectattr('item', 'eq', item) | map(attribute='stat.exists') | first) == false
+
+- name: output from runing acme_dns_reg
+  ansible.builtin.debug:
+    msg: |
+      {{ run_acme_dns_reg }}
+  when: run_acme_dns_reg.changed
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Storing in a path relative to the playbook
+  ansible.builtin.fetch:
+    src: "{{ acme_dns_reg_registered_domains_dir }}/{{ item }}"
+    dest: "../acme-dns-registrations/{{ item }}"
+    flat: yes
+  loop: "{{ acme_dns_reg_cert_domains }}"
+  when: run_acme_dns_reg.changed
+
+
+
+# Replicate acme-dns credentials to other hosts if needed
+- name: Replicate registered domains
+  ansible.builtin.include_tasks:
+    file: replicate_registration.yml
+  loop: "{{ acme_dns_replicate_registration }}"
+  loop_control:
+    loop_var: each_replicate_registration

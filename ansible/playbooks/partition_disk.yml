@@ -1,0 +1,32 @@
+---
+- hosts: all
+  name: Partition Disk
+  become: true
+  gather_facts: false
+  vars:
+    # Defaults if not passed in (which would expect to fail)
+    device_path: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_example
+    partition_number: 1
+    partition_label: gpt
+    partition_name: example
+
+  tasks:
+    - name: install required packages
+      ansible.builtin.package:
+        name:
+          - parted
+        state: present
+      register: partition_apt_packages
+
+    - name: Create a partition to fill the attached disk
+      community.general.parted:
+        device: "{{ device_path }}"
+        number: "{{ partition_number }}"
+        part_start: "0%"
+        part_end: "100%"
+        part_type: primary
+        label: "{{ partition_label }}"
+        name: "{{ (partition_label == 'gpt') | ternary(partition_name, '') }}"
+        unit: MiB
+        state: present
+      ignore_errors: "{{ ansible_check_mode and partition_apt_packages.changed }}"

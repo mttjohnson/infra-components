@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+set -eu
+
+
+########################################
+## Introduction
+########################################
+declare help_info
+help_info=$(cat <<'CONTENTS_HEREDOC'
+acme_dns_reg v0.1
+Copyright (c) 2024, Matt Johnson (m@ttjohnson.com). All 
+rights reserved.
+
+Register a domain record with acme-dns and update acme-dns-client
+storage file with registration results.
+
+Usage: acme_dns_reg [options] <domain_for_registration>
+  --help                 Display help information
+  --debug                Display debug output
+
+Examples:
+    acme_dns_reg my-host.example.com
+    acme_dns_reg --debug my-host.example.com
+
+
+
+CONTENTS_HEREDOC
+)
+
+
+########################################
+## Program Default Options
+########################################
+declare domain_for_registration
+declare debug 
+declare registered_domain_file_directory 
+declare acme_dns_client_storage
+declare acme_dns_api_url
+
+# script settings
+domain_for_registration=""
+debug=false
+registered_domain_file_directory="/etc/acme_dns_reg/domains"
+
+# client settings
+acme_dns_client_storage="/etc/acmedns/clientstorage.json"
+
+# acme-dns api settings
+acme_dns_api_url="{{ acme_dns_api_url }}"
+
+
+########################################
+## Command Line Options
+########################################
+# If command line arguments/parameters are set, override the default options
+for switch in "$@"; do
+    case $switch in
+        --debug)
+            debug=true
+            ;;
+        --help)
+            echo -E "${help_info}"
+            exit;
+            ;;
+        *)
+            domain_for_registration="${switch#*=}"
+            ;;
+    esac
+done
+
+
+########################################
+## Validate Input
+########################################
+if [[ ! "${domain_for_registration}" =~ ^.+$ ]]; then
+    echo -E "${help_info}"
+    exit;
+fi
+
+
+########################################
+## Main Program
+########################################
+declare acme_dns_register
+declare acme_dns_client_new_entry
+
+[[ "${debug}" = "true" ]] && echo "acme_dns_api_url: ${acme_dns_api_url}"
+[[ "${debug}" = "true" ]] && echo "acme_dns_client_storage: ${acme_dns_client_storage}"
+[[ "${debug}" = "true" ]] && echo "registered_domain_file_directory: ${registered_domain_file_directory}"
+
+# call api to register domain
+acme_dns_register=$(curl -s -X POST "${acme_dns_api_url}/register")
+[[ "${debug}" = "true" ]] && echo -E "${acme_dns_register}"
+
+# Conditional check to see if response has a valid subdomain
+[[ $(echo -E "${acme_dns_register}" | jq 'has("subdomain")') = "true" ]] && echo 'was true'
+
+acme_dns_client_new_entry=$(echo -E "${acme_dns_register}" | jq \
+    --arg acme_dns_api_url "${acme_dns_api_url}" \
+    --arg domain_for_registration "${domain_for_registration}" \
+'{
+    ($domain_for_registration): {
+        fulldomain: .fulldomain,
+        subdomain: .subdomain,
+        username: .username,
+        password: .password,
+        server_url: $acme_dns_api_url
+    }
+}'
+)
+[[ "${debug}" = "true" ]] && echo "Response from API Call:"
+[[ "${debug}" = "true" ]] && echo -E "${acme_dns_client_new_entry}"
+
+# Backup client json file
+[[ "${debug}" = "true" ]] && echo "Backup client json file"
+cp -a "${acme_dns_client_storage}" "${acme_dns_client_storage}_bak_$(date +"%Y%m%d%H%M%S")"
+[[ -f "${acme_dns_client_storage}_new" ]] && [[ "${debug}" = "true" ]] && echo "Remove "${acme_dns_client_storage}_new" if it already exists"
+[[ -f "${acme_dns_client_storage}_new" ]] && rm "${acme_dns_client_storage}_new"
+
+# Combine existing registrations and new registration
+new_client_storage=$(cat "${acme_dns_client_storage}" <(echo -E "${acme_dns_client_new_entry}") | jq -s add)
+[[ "${debug}" = "true" ]] && echo "Result of new client json file with appended output from new registration:"
+[[ "${debug}" = "true" ]] && echo -E "${new_client_storage}"
+[[ "${debug}" = "true" ]] && echo "Create new client json file with appended output from new registration"
+echo -E "${new_client_storage}" > "${acme_dns_client_storage}_new"
+[[ "${debug}" = "true" ]] && echo "chmod 640 ${acme_dns_client_storage}_new"
+chmod 640 "${acme_dns_client_storage}_new"
+[[ "${debug}" = "true" ]] && echo "mv ${acme_dns_client_storage}_new ${acme_dns_client_storage}"
+mv "${acme_dns_client_storage}_new" "${acme_dns_client_storage}"
+
+# Create reverse reference to subdomain
+[[ "${debug}" = "true" ]] && echo "Create reverse reference to subdomain to: ${registered_domain_file_directory}/${domain_for_registration}"
+mkdir -p "${registered_domain_file_directory}"
+registered_domain_reference=$(echo -E "${acme_dns_client_new_entry}" \
+    | jq -r --arg domain_for_registration "${domain_for_registration}" '.[$domain_for_registration].fulldomain')
+echo -E "${registered_domain_reference}" > "${registered_domain_file_directory}/${domain_for_registration}"

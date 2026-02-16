@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+# {{ ansible_managed }}
+
+# On successful deploy, make sure the incus updates the cluster cert
+incus cluster update-certificate /var/lib/incus/server.crt /var/lib/incus/server.key

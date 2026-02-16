@@ -1,0 +1,23 @@
+---
+- name: Check Ansible version being executed matches expected version
+  ansible.builtin.import_playbook: check_ansible_version.yml
+
+- hosts: all
+  name: ACME DNS Registration
+  any_errors_fatal: true
+  gather_facts: true
+  become: true
+
+  tasks:
+    # ----- Basic Host Setup -----
+    # Ansible remote_tmp setup
+    - { ansible.builtin.import_role: { name: mttjohnson.infra.ansible_remote_tmp }, tags: ansible_remote_tmp }
+
+    # Initialize Access
+    - { ansible.builtin.import_role: { name: mttjohnson.infra.syseng_access }, tags: syseng_access }
+
+    # OS distribution upgrades
+    - { ansible.builtin.import_role: { name: mttjohnson.infra.os_update }, tags: os_update }
+
+    # System Services
+    - { ansible.builtin.import_role: { name: mttjohnson.infra.acme_dns_reg }, tags: acme_dns_reg }

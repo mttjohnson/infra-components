@@ -1,0 +1,41 @@
+---
+# Download install files
+
+- name: Download install file with checksum
+  ansible.builtin.get_url:
+    url: "{{ acme_dns_client_url }}"
+    dest: "{{ acme_dns_client_dest }}"
+    checksum: "{{ acme_dns_client_checksum }}"
+  register: acme_dns_client_download_install_files
+
+# Install software
+
+# mkdir -p /root/acme-dns-client
+- name: Create a directory if it does not exist
+  ansible.builtin.file:
+    path: /root/acme-dns-client
+    state: directory
+
+# tar -xzf acme-dns-client_0.3_linux_amd64.tar.gz -C /root/acme-dns-client
+- name: Unarchive downloaded install files
+  ansible.builtin.unarchive:
+    src: "{{ acme_dns_client_dest }}"
+    dest: /root/acme-dns-client
+    remote_src: yes
+  register: acme_dns_client_extract_download_install_files
+  ignore_errors: "{{ ansible_check_mode and acme_dns_client_download_install_files.changed }}"
+
+# cp /root/acme-dns-client/acme-dns-client /usr/local/bin/acme-dns-client
+- name: Copy acme-dns binary to install destination
+  ansible.builtin.copy:
+    src: /root/acme-dns-client/acme-dns-client
+    dest: /usr/local/bin/acme-dns-client
+    remote_src: yes
+    owner: root
+    group: root
+    mode: "0755"
+  register: acme_dns_client_install_binary
+  ignore_errors: "{{ ansible_check_mode and acme_dns_client_download_install_files.changed }}"
+
+# sudo acme-dns-client register -d my-host.example.com -s https://my-acme-dns-server.example.com
+# _acme-challenge.my-host.example.com.     IN      CNAME   6b969056-b171-4e2a-9811-589cc6d220f3.my-acme-dns-server.example.com.

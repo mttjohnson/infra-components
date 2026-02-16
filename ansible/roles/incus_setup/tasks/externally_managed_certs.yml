@@ -1,0 +1,66 @@
+---
+
+# Expects to be called from a loop where the loop_var is defined as each_cert
+
+# - name: Setup list of externally managed certs
+#   ansible.builtin.include_tasks:
+#     file: externally_managed_certs.yml
+#   loop: "{{ incus_externally_managed_certs }}"
+#   loop_control:
+#     loop_var: each_cert
+
+# each_cert:
+#   cert: /var/lib/incus/server.crt
+#   key: /var/lib/incus/server.key
+#   cert_sym_target: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/fullchain.pem"
+#   key_sym_target: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/privkey.pem"
+
+# backup default cert
+- name: Check if certificate is a symlink.
+  ansible.builtin.stat:
+    path: "{{ each_cert.cert }}"
+  register: incus_cert_stat
+- name: planning to run - Backup certificate file
+  ansible.builtin.debug:
+    msg: |
+      cp -a {{ each_cert.cert }} {{ each_cert.cert }}.bak
+  changed_when: ansible_check_mode
+  when: incus_cert_stat.stat.islnk is defined and incus_cert_stat.stat.islnk == False
+- name: Backup certificate file
+  ansible.builtin.command: 
+    cmd: |
+      cp -a {{ each_cert.cert }} {{ each_cert.cert }}.bak
+  when: incus_cert_stat.stat.islnk is defined and incus_cert_stat.stat.islnk == False
+
+- name: Check if key is a symlink.
+  ansible.builtin.stat:
+    path: "{{ each_cert.key }}"
+  register: incus_key_stat
+- name: planning to run - Backup key file
+  ansible.builtin.debug:
+    msg: |
+      cp -a {{ each_cert.key }} {{ each_cert.key }}.bak
+  changed_when: ansible_check_mode
+  when: incus_key_stat.stat.islnk is defined and incus_key_stat.stat.islnk == False
+- name: Backup key file
+  ansible.builtin.command: 
+    cmd: |
+      cp -a {{ each_cert.key }} {{ each_cert.key }}.bak
+  when: incus_key_stat.stat.islnk is defined and incus_key_stat.stat.islnk == False
+
+# symlink cert and key
+- name: Create symlink to certificate
+  ansible.builtin.file:
+    src: "{{ each_cert.cert_sym_target }}"
+    dest: "{{ each_cert.cert }}"
+    state: link
+    force: yes # overwrite any existing file with symlink
+  register: incus_cert_symlink
+
+- name: Create symlink to key
+  ansible.builtin.file:
+    src: "{{ each_cert.key_sym_target }}"
+    dest: "{{ each_cert.key }}"
+    state: link
+    force: yes # overwrite any existing file with symlink
+  register: incus_key_symlink

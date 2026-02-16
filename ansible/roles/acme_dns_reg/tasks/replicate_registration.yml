@@ -1,0 +1,58 @@
+---
+
+# Expects to be called from a loop where the loop_var is defined as each_replicate_registration
+
+# - name: Replicate registered domains
+#   ansible.builtin.include_tasks:
+#     file: replicate_registration.yml
+#   loop: "{{ acme_dns_replicate_registration }}"
+#   loop_control:
+#     loop_var: each_replicate_registration
+
+# each_replicate_registration:
+#     source_host: test1
+#     domain: shared.example.com
+
+
+
+# Step 2: Slurp from first host
+- name: Read acme-dns credentials from first host
+  slurp:
+    src: "{{ acme_dns_credentials }}"
+  register: acmedns_creds_raw
+  run_once: true
+  delegate_to: "{{ each_replicate_registration.source_host }}"
+
+# Step 3: Parse JSON
+- name: Parse acme-dns credentials
+  set_fact:
+    acmedns_all_creds: "{{ acmedns_creds_raw.content | b64decode | from_json }}"
+  run_once: true
+
+- name: Extract shared domain credentials
+  set_fact:
+    shared_domain_creds: "{{ acmedns_all_creds[each_replicate_registration.domain] }}"
+  run_once: true
+
+# Step 4: Merge into other hosts
+- name: Read existing clientstorage.json on each host
+  slurp:
+    src: "{{ acme_dns_credentials }}"
+  register: existing_creds_raw
+  failed_when: false  # File might not exist yet
+
+- name: Parse existing credentials
+  set_fact:
+    existing_creds: "{{ (existing_creds_raw.content | b64decode | from_json) if existing_creds_raw.content is defined else {} }}"
+
+- name: Merge shared domain credentials
+  set_fact:
+    merged_creds: "{{ existing_creds | combine({each_replicate_registration.domain: shared_domain_creds}) }}"
+
+- name: Write updated clientstorage.json
+  copy:
+    content: "{{ merged_creds | to_nice_json }}"
+    dest: "{{ acme_dns_credentials }}"
+    owner: root
+    group: root
+    mode: '0600'

@@ -1,0 +1,131 @@
+---
+- name: Install snapd
+  ansible.builtin.package:
+    name: snapd
+    state: present
+  register: certbot_install_snapd
+
+# sudo snap install --classic certbot
+- name: Install certbot
+  community.general.snap:
+    name: certbot
+    classic: true
+  ignore_errors: "{{ ansible_check_mode and certbot_install_snapd.changed }}"
+
+# sudo ln -s /snap/bin/certbot /usr/bin/certbot
+- name: Symlink certbot in /usr/bin
+  ansible.builtin.file:
+    src: /snap/bin/certbot
+    dest: /usr/bin/certbot
+    owner: root
+    group: root
+    state: link
+  ignore_errors: "{{ ansible_check_mode and certbot_install_snapd.changed }}"
+
+# - name: generate certificate files
+#   command: >
+#     /usr/bin/certbot certonly
+#     --agree-tos
+#     --noninteractive
+#     --manual
+#     --preferred-challenges dns
+#     --email {{ certbot_email|quote }}
+#     --manual-auth-hook 'acme-dns-client'
+#     -d {{ item }}
+#   args:
+#     creates: /etc/letsencrypt/live/{{ item }}/fullchain.pem
+#   register: run_certbot_generate
+#   loop: "{{ certbot_domains }}"
+#   when: certbot_domains and certbot_email and certbot_generate_and_issue_cert
+
+
+- name: Check for existing cert
+  ansible.builtin.stat:
+    path: /etc/letsencrypt/live/{{ certbot_domains[0] }}/fullchain.pem
+  register: generated_cert_stat
+
+- name: planning to run - generate certificate files
+  ansible.builtin.debug:
+    msg: >
+      /usr/bin/certbot certonly
+      --agree-tos
+      --noninteractive
+      --manual
+      --preferred-challenges dns
+      --email {{ certbot_email|quote }}
+      --manual-auth-hook 'acme-dns-client'
+      {{ certbot_domains | map('regex_replace', '^', '-d ') | join(' ') }}
+  changed_when: ansible_check_mode
+  when:
+    - not generated_cert_stat.stat.exists 
+    - certbot_domains
+    - certbot_email 
+    - certbot_generate_and_issue_cert
+- name: generate certificate files
+  ansible.builtin.command: 
+    cmd: >
+      /usr/bin/certbot certonly
+      --agree-tos
+      --noninteractive
+      --manual
+      --preferred-challenges dns
+      --email {{ certbot_email|quote }}
+      --manual-auth-hook 'acme-dns-client'
+      {{ certbot_domains | map('regex_replace', '^', '-d ') | join(' ') }}
+  register: run_certbot_generate
+  when:
+    - not generated_cert_stat.stat.exists 
+    - certbot_domains
+    - certbot_email 
+    - certbot_generate_and_issue_cert
+
+- name: output from running certbot
+  ansible.builtin.debug:
+    msg: |
+      {{ run_certbot_generate }}
+  when: run_certbot_generate.changed
+  ignore_errors: "{{ ansible_check_mode }}"
+
+
+
+# Cert and Key access
+# Allows group cert access managed by certbot
+
+- name: Create Cert Access group
+  ansible.builtin.group:
+    name: "{{ certbot_cert_access_group }}"
+    system: true
+    state: present
+  register: certbot_create_access_group
+
+- name: create certbot deploy hook directory
+  ansible.builtin.file:
+    path: "/etc/letsencrypt/renewal-hooks/deploy/"
+    owner: root
+    group: "{{ certbot_cert_access_group }}"
+    mode: "0755"
+    state: directory
+  ignore_errors: "{{ ansible_check_mode and certbot_create_access_group.changed }}"
+
+- name: remove old deploy hook script
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks/deploy/deploy_hook.sh
+    state: absent
+
+- name: group permission script deploy hook
+  ansible.builtin.template:
+    src: 01_cert_access_group.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/01_cert_access_group.sh
+    owner: root
+    group: "{{ certbot_cert_access_group }}"
+    mode: "0740"
+  ignore_errors: "{{ ansible_check_mode and certbot_create_access_group.changed }}"
+
+- name: planning to run - initial group permission script
+  ansible.builtin.debug:
+      msg: /etc/letsencrypt/renewal-hooks/deploy/01_cert_access_group.sh
+  changed_when: ansible_check_mode
+  when: run_certbot_generate.changed
+- name: initial group permission script
+  ansible.builtin.command: /etc/letsencrypt/renewal-hooks/deploy/01_cert_access_group.sh
+  when: run_certbot_generate.changed
