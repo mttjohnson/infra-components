@@ -1,0 +1,10 @@
+---
+# Map ansible architecture facts to Go architecture names used by prometheus release filenames
+_prometheus_arch_map:
+  i386: "386"
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: armv7
+  armv6l: armv6
+
+_prometheus_go_arch: "{{ prometheus_go_arch | default(_prometheus_arch_map[ansible_facts['architecture']] | default(ansible_facts['architecture'])) }}"

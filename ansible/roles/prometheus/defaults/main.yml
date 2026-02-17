@@ -1,0 +1,47 @@
+---
+# Prometheus version to install
+# Set to "latest" to auto-detect the latest release from GitHub
+# Set to a specific version string (e.g. "3.9.1") to pin a version
+prometheus_version: latest
+
+# GitHub repository for constructing download URLs
+prometheus_github_repo: prometheus/prometheus
+
+# Architecture mapping from ansible_facts to Go arch names
+# Override if your target arch is not covered by the defaults in vars/main.yml
+# prometheus_go_arch: amd64
+
+# Download URLs (constructed from version, OS, and architecture)
+prometheus_archive_url: >-
+  https://github.com/{{ prometheus_github_repo }}/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.{{ ansible_facts['system'] | lower }}-{{ _prometheus_go_arch }}.tar.gz
+prometheus_checksums_url: >-
+  https://github.com/{{ prometheus_github_repo }}/releases/download/v{{ prometheus_version }}/sha256sums.txt
+
+# Local path for downloaded archive on the target host
+prometheus_download_dest: /root/prometheus-{{ prometheus_version }}.{{ ansible_facts['system'] | lower }}-{{ _prometheus_go_arch }}.tar.gz
+prometheus_extract_dest: /root/prometheus-{{ prometheus_version }}
+
+# Install destination for binaries
+prometheus_binary_install_dir: /usr/local/bin
+
+# Binaries to install from the archive
+prometheus_binaries:
+  - prometheus
+  - promtool
+
+# System user and group
+prometheus_system_group: prometheus
+prometheus_system_user: prometheus
+
+# Directories
+prometheus_config_dir: /etc/prometheus
+prometheus_db_dir: /var/lib/prometheus
+
+# Service configuration
+prometheus_web_listen_address: 0.0.0.0:9090
+prometheus_storage_retention: 30d
+prometheus_storage_retention_size: 0
+
+# Additional command-line flags to pass to prometheus (list of strings)
+# Example: ["--web.enable-admin-api", "--web.enable-lifecycle"]
+prometheus_extra_flags: []
