@@ -57,9 +57,9 @@
       {{ certbot_domains | map('regex_replace', '^', '-d ') | join(' ') }}
   changed_when: ansible_check_mode
   when:
-    - not generated_cert_stat.stat.exists 
-    - certbot_domains
-    - certbot_email 
+    - not generated_cert_stat.stat.exists
+    - certbot_domains | length > 0
+    - certbot_email | length > 0
     - certbot_generate_and_issue_cert
 - name: generate certificate files
   ansible.builtin.command: 
@@ -74,9 +74,9 @@
       {{ certbot_domains | map('regex_replace', '^', '-d ') | join(' ') }}
   register: run_certbot_generate
   when:
-    - not generated_cert_stat.stat.exists 
-    - certbot_domains
-    - certbot_email 
+    - not generated_cert_stat.stat.exists
+    - certbot_domains | length > 0
+    - certbot_email | length > 0
     - certbot_generate_and_issue_cert
 
 - name: output from running certbot
