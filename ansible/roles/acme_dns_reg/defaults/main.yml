@@ -14,3 +14,8 @@ acme_dns_replicate_registration: []
 #     domain: shared.example.com
 
 acme_dns_api_url: https://my-acme-dns-server.example.com
+
+# The inventory_dir is a more stable location to make sure files are stored 
+# along side the inventory directory in in acme-dns-registrations and not
+# in the collection directory where the role may end up being called from
+acme_dns_reg_fetch_dest: "{{ inventory_dir }}/../acme-dns-registrations"

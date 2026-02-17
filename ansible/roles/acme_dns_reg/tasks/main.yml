@@ -86,10 +86,9 @@
 - name: Storing in a path relative to the playbook
   ansible.builtin.fetch:
     src: "{{ acme_dns_reg_registered_domains_dir }}/{{ item }}"
-    dest: "../acme-dns-registrations/{{ item }}"
+    dest: "{{ acme_dns_reg_fetch_dest }}/{{ item }}"
     flat: yes
   loop: "{{ acme_dns_reg_cert_domains }}"
-  when: run_acme_dns_reg.changed
 
 
 
