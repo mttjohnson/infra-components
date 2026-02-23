@@ -44,65 +44,60 @@
 
 
 # ----- Download, verify, and install binary -----
-# Skipped entirely in --check mode because each step depends on the previous
-# one having actually executed (directory must exist for downloads, archive
-# must exist for extraction, etc.).
 
-- name: Download, verify, and install prometheus
-  when: not ansible_check_mode
-  block:
-    - name: Create extract directory
-      ansible.builtin.file:
-        path: "{{ prometheus_extract_dest }}"
-        state: directory
-        mode: "0755"
+- name: Create extract directory
+  ansible.builtin.file:
+    path: "{{ prometheus_extract_dest }}"
+    state: directory
+    mode: "0755"
 
-    - name: Download sha256sums.txt
-      ansible.builtin.get_url:
-        url: "{{ prometheus_checksums_url }}"
-        dest: "{{ prometheus_extract_dest }}/sha256sums.txt"
-        force: true
-        mode: "0644"
+- name: Fetch sha256sums from GitHub
+  ansible.builtin.uri:
+    url: "{{ prometheus_checksums_url }}"
+    return_content: yes
+  register: prometheus_checksums_response
+  check_mode: false
 
-    - name: Read sha256sums.txt
-      ansible.builtin.slurp:
-        src: "{{ prometheus_extract_dest }}/sha256sums.txt"
-      register: prometheus_checksums_file
+- name: Use the contents
+  ansible.builtin.debug:
+    msg: "{{ prometheus_checksums_response.content }}"
 
-    - name: Extract expected checksum for downloaded archive
-      ansible.builtin.set_fact:
-        prometheus_expected_checksum: >-
-          {{ (prometheus_checksums_file.content | b64decode).split('\n')
-             | select('search', prometheus_download_dest | basename | regex_escape)
-             | first
-             | split(' ')
-             | first }}
+- name: Extract expected checksum for downloaded archive
+  ansible.builtin.set_fact:
+    prometheus_expected_checksum: >-
+      {{ prometheus_checksums_response.content.split('\n')
+          | select('search', prometheus_download_dest | basename | regex_escape)
+          | first
+          | split(' ')
+          | first }}
 
-    - name: Download prometheus archive
-      ansible.builtin.get_url:
-        url: "{{ prometheus_archive_url }}"
-        dest: "{{ prometheus_download_dest }}"
-        checksum: "sha256:{{ prometheus_expected_checksum }}"
-        mode: "0644"
+- name: Download prometheus archive
+  ansible.builtin.get_url:
+    url: "{{ prometheus_archive_url }}"
+    dest: "{{ prometheus_download_dest }}"
+    checksum: "sha256:{{ prometheus_expected_checksum }}"
+    mode: "0644"
 
-    - name: Extract prometheus archive
-      ansible.builtin.unarchive:
-        src: "{{ prometheus_download_dest }}"
-        dest: "{{ prometheus_extract_dest }}"
-        remote_src: true
-        extra_opts:
-          - --strip-components=1
+- name: Extract prometheus archive
+  ansible.builtin.unarchive:
+    src: "{{ prometheus_download_dest }}"
+    dest: "{{ prometheus_extract_dest }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+  ignore_errors: "{{ ansible_check_mode }}"
 
-    - name: Copy prometheus binaries to install directory
-      ansible.builtin.copy:
-        src: "{{ prometheus_extract_dest }}/{{ item }}"
-        dest: "{{ prometheus_binary_install_dir }}/{{ item }}"
-        remote_src: true
-        owner: root
-        group: root
-        mode: "0755"
-      loop: "{{ prometheus_binaries }}"
-      notify: Restart prometheus
+- name: Copy prometheus binaries to install directory
+  ansible.builtin.copy:
+    src: "{{ prometheus_extract_dest }}/{{ item }}"
+    dest: "{{ prometheus_binary_install_dir }}/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ prometheus_binaries }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+  notify: Restart prometheus
 
 
 
