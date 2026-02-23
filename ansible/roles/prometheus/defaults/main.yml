@@ -32,6 +32,7 @@ prometheus_binaries:
 # System user and group
 prometheus_system_group: prometheus
 prometheus_system_user: prometheus
+prometheus_system_user_extra_groups: []
 
 # Directories
 prometheus_config_dir: /etc/prometheus
@@ -45,3 +46,28 @@ prometheus_storage_retention_size: 0
 # Additional command-line flags to pass to prometheus (list of strings)
 # Example: ["--web.enable-admin-api", "--web.enable-lifecycle"]
 prometheus_extra_flags: []
+
+# TLS configuration
+# Set to true to enable HTTPS via Prometheus's native web config
+prometheus_tls_enabled: false
+
+# Certificate source mode: "self_signed" or "symlink"
+#   self_signed - role generates a self-signed certificate and key (default)
+#   symlink     - role creates symlinks to an externally managed cert and key
+#                 (e.g. certbot/Let's Encrypt); set prometheus_tls_cert_symlink_src
+#                 and prometheus_tls_key_symlink_src to the source paths.
+#                 NOTE: the prometheus system user must be able to read the key
+#                 file at runtime. For certbot-managed certs the private key is
+#                 typically 0600 root:root, so you will need a deploy hook or
+#                 group membership to grant read access before the service starts.
+prometheus_tls_mode: self_signed
+
+# Destination paths for the certificate and key inside prometheus_config_dir.
+# Prometheus reads these paths from web-config.yml; change only if necessary.
+prometheus_tls_cert_dir: "{{ prometheus_config_dir }}/tls"
+prometheus_tls_cert_path: "{{ prometheus_tls_cert_dir }}/prometheus.crt"
+prometheus_tls_key_path: "{{ prometheus_tls_cert_dir }}/prometheus.key"
+
+# Source paths used when prometheus_tls_mode == "symlink"
+prometheus_tls_cert_symlink_src: ""
+prometheus_tls_key_symlink_src: ""

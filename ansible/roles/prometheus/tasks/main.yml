@@ -36,6 +36,7 @@
   ansible.builtin.user:
     name: "{{ prometheus_system_user }}"
     group: "{{ prometheus_system_group }}"
+    groups: "{{ prometheus_system_user_extra_groups }}"
     system: true
     shell: /usr/sbin/nologin
     home: "{{ prometheus_config_dir }}"
@@ -116,6 +117,69 @@
     owner: "{{ prometheus_system_user }}"
     group: "{{ prometheus_system_group }}"
     mode: "0755"
+
+
+
+# ----- TLS setup -----
+
+- name: Configure TLS
+  when: prometheus_tls_enabled
+  block:
+    - name: Create TLS certificate directory
+      ansible.builtin.file:
+        path: "{{ prometheus_tls_cert_dir }}"
+        state: directory
+        owner: "{{ prometheus_system_user }}"
+        group: "{{ prometheus_system_group }}"
+        mode: "0750"
+
+    - name: Generate self-signed certificate and key
+      when: prometheus_tls_mode == "self_signed"
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:4096
+          -keyout {{ prometheus_tls_key_path }}
+          -out {{ prometheus_tls_cert_path }}
+          -days 3650 -nodes
+          -subj "/CN=prometheus"
+        creates: "{{ prometheus_tls_cert_path }}"
+      notify: Restart prometheus
+
+    - name: Ensure self-signed certificate files are owned by prometheus
+      when: prometheus_tls_mode == "self_signed"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: "{{ prometheus_system_user }}"
+        group: "{{ prometheus_system_group }}"
+        mode: "0640"
+      loop:
+        - "{{ prometheus_tls_cert_path }}"
+        - "{{ prometheus_tls_key_path }}"
+
+    - name: Symlink certificate from external path
+      when: prometheus_tls_mode == "symlink"
+      ansible.builtin.file:
+        src: "{{ prometheus_tls_cert_symlink_src }}"
+        dest: "{{ prometheus_tls_cert_path }}"
+        state: link
+      notify: Restart prometheus
+
+    - name: Symlink key from external path
+      when: prometheus_tls_mode == "symlink"
+      ansible.builtin.file:
+        src: "{{ prometheus_tls_key_symlink_src }}"
+        dest: "{{ prometheus_tls_key_path }}"
+        state: link
+      notify: Restart prometheus
+
+    - name: Deploy web-config.yml
+      ansible.builtin.template:
+        src: web-config.yml.j2
+        dest: "{{ prometheus_config_dir }}/web-config.yml"
+        owner: "{{ prometheus_system_user }}"
+        group: "{{ prometheus_system_group }}"
+        mode: "0640"
+      notify: Restart prometheus
 
 
 

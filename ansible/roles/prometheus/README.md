@@ -25,6 +25,32 @@ Include the role in a playbook:
 prometheus_version: "3.9.1"
 ```
 
+### Enabling TLS with a self-signed certificate
+
+```yaml
+prometheus_tls_enabled: true
+# prometheus_tls_mode defaults to "self_signed" — no further config needed
+```
+
+A 4096-bit RSA certificate valid for 10 years is generated on first run and stored in
+`{{ prometheus_config_dir }}/tls/`. It is not rotated automatically; delete the files and
+re-run the role to regenerate.
+
+### Enabling TLS with an externally managed certificate (e.g. certbot)
+
+```yaml
+prometheus_tls_enabled: true
+prometheus_tls_mode: symlink
+prometheus_tls_cert_symlink_src: /etc/letsencrypt/live/prometheus.example.com/fullchain.pem
+prometheus_tls_key_symlink_src: /etc/letsencrypt/live/prometheus.example.com/privkey.pem
+```
+
+The role creates symlinks at `{{ prometheus_tls_cert_dir }}/prometheus.crt` and
+`prometheus.key` pointing to the source paths. The `prometheus` system user must be able to
+read the private key at runtime. For certbot-managed certs the key is typically `0600
+root:root`, so you will need a certbot deploy hook or group membership to grant read access
+before the service starts.
+
 ### Default `latest` behavior
 
 When `prometheus_version` is set to `latest` (the default), the role queries the GitHub API at `https://api.github.com/repos/prometheus/prometheus/releases/latest` to resolve the current release version. This request is unauthenticated and subject to GitHub's API rate limits. If you are running this frequently or in CI, consider pinning a version or setting a `GITHUB_TOKEN` environment variable on the controller.
@@ -43,6 +69,13 @@ When `prometheus_version` is set to `latest` (the default), the role queries the
 | `prometheus_storage_retention` | `30d` | How long to retain time series data |
 | `prometheus_storage_retention_size` | `0` | Maximum storage size (0 = unlimited) |
 | `prometheus_extra_flags` | `[]` | Additional command-line flags passed to the prometheus binary |
+| `prometheus_tls_enabled` | `false` | Enable HTTPS via Prometheus's native web config |
+| `prometheus_tls_mode` | `self_signed` | Certificate source: `self_signed` or `symlink` |
+| `prometheus_tls_cert_dir` | `{{ prometheus_config_dir }}/tls` | Directory holding the cert and key files |
+| `prometheus_tls_cert_path` | `{{ prometheus_tls_cert_dir }}/prometheus.crt` | Path Prometheus reads the certificate from |
+| `prometheus_tls_key_path` | `{{ prometheus_tls_cert_dir }}/prometheus.key` | Path Prometheus reads the private key from |
+| `prometheus_tls_cert_symlink_src` | `""` | Source path for the certificate symlink (symlink mode only) |
+| `prometheus_tls_key_symlink_src` | `""` | Source path for the private key symlink (symlink mode only) |
 
 ## What gets installed
 

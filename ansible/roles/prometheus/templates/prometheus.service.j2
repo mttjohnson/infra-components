@@ -21,6 +21,9 @@ ExecStart={{ prometheus_binary_install_dir }}/prometheus \
   --storage.tsdb.retention.size={{ prometheus_storage_retention_size }} \
 {% endif %}
   --web.listen-address={{ prometheus_web_listen_address }} \
+{% if prometheus_tls_enabled %}
+  --web.config.file={{ prometheus_config_dir }}/web-config.yml \
+{% endif %}
 {% for flag in prometheus_extra_flags %}
   {{ flag }} \
 {% endfor %}

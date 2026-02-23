@@ -6,5 +6,10 @@ global:
 
 scrape_configs:
   - job_name: "prometheus"
+{% if prometheus_tls_enabled %}
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+{% endif %}
     static_configs:
       - targets: ["localhost:9090"]
