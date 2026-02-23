@@ -65,11 +65,9 @@
 - name: Extract expected checksum for downloaded archive
   ansible.builtin.set_fact:
     prometheus_expected_checksum: >-
-      {{ prometheus_checksums_response.content.split('\n')
-          | select('search', prometheus_download_dest | basename | regex_escape)
-          | first
-          | split(' ')
-          | first }}
+      {{ prometheus_checksums_response.content
+         | regex_search('^([0-9a-f]+)\s+' + (prometheus_download_dest | basename | regex_escape) + '\s*$', '\1', multiline=True)
+         | first }}
 
 - name: Download prometheus archive
   ansible.builtin.get_url:
