@@ -120,6 +120,102 @@
 
 
 
+# ----- Basic authentication setup -----
+
+- name: Configure basic authentication credentials
+  when: prometheus_basic_auth_enabled
+  block:
+    - name: Check if secret value file exists
+      ansible.builtin.stat:
+        path: "{{ prometheus_basic_auth_password_file }}"
+      register: prometheus_basic_auth_password_file_stat
+
+    - name: Generate new unique secret value
+      ansible.builtin.shell: 
+        cmd: |
+          LC_ALL=C tr -dc 'A-Za-z0-9%+,-./_' </dev/urandom | head -c 32
+      no_log: true
+      register: prometheus_basic_auth_pass_gen
+      check_mode: false
+      changed_when: false
+      when: not prometheus_basic_auth_password_file_stat.stat.exists
+    - name: Create secret value file
+      ansible.builtin.copy:
+        content: |
+          {{ prometheus_basic_auth_pass_gen.stdout }}
+        dest: "{{ prometheus_basic_auth_password_file }}"
+        owner: root
+        group: root
+        mode: "600"
+      no_log: true
+      when: not prometheus_basic_auth_password_file_stat.stat.exists
+
+
+    - name: Get secret value file contents
+      ansible.builtin.slurp:
+        src: "{{ prometheus_basic_auth_password_file }}"
+      register: _prometheus_password_slurp
+      when: prometheus_basic_auth_password_file_stat.stat.exists
+
+    - name: Set variable containing secret
+      ansible.builtin.set_fact:
+        _prometheus_basic_auth_password: >-
+          {{ prometheus_basic_auth_pass_gen.stdout
+            if not prometheus_basic_auth_password_file_stat.stat.exists
+            else (_prometheus_password_slurp.content | ansible.builtin.b64decode | trim) }}
+      no_log: true
+    - name: Fail if secret variable is empty
+      ansible.builtin.fail:
+        msg: "ERROR: The secret value is empty"
+      when: _prometheus_basic_auth_password | length == 0
+
+    - name: Check if bcrypt hash cache file exists on remote host
+      ansible.builtin.stat:
+        path: "{{ prometheus_basic_auth_hash_file }}"
+      register: _prometheus_hash_file_stat
+    - name: Generate bcrypt hash of basic auth password
+      when: not _prometheus_hash_file_stat.stat.exists
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c "import bcrypt, os;
+          pw = os.environ['PW'].encode();
+          print(bcrypt.hashpw(pw, bcrypt.gensalt(rounds=12)).decode())"
+      environment:
+        PW: "{{ _prometheus_basic_auth_password }}"
+      register: _prometheus_hash_result
+      delegate_to: localhost
+      become: false
+      no_log: true
+      check_mode: false
+
+    - name: Write bcrypt hash to remote host
+      when: not _prometheus_hash_file_stat.stat.exists
+      ansible.builtin.copy:
+        content: "{{ _prometheus_hash_result.stdout }}\n"
+        dest: "{{ prometheus_basic_auth_hash_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Read bcrypt hash from remote host
+      ansible.builtin.slurp:
+        src: "{{ prometheus_basic_auth_hash_file }}"
+      register: _prometheus_hash_slurp
+      no_log: true
+      when: _prometheus_hash_file_stat.stat.exists
+
+    - name: Set basic auth password hash fact
+      ansible.builtin.set_fact:
+        _prometheus_basic_auth_password_hash: >-
+          {{ _prometheus_hash_result.stdout | trim
+            if not _prometheus_hash_file_stat.stat.exists
+            else (_prometheus_hash_slurp.content | ansible.builtin.b64decode | trim) }}
+      no_log: true
+      ignore_errors: "{{ ansible_check_mode }}"
+
+
+
 # ----- TLS setup -----
 
 - name: Configure TLS
@@ -172,14 +268,15 @@
         state: link
       notify: Restart prometheus
 
-    - name: Deploy web-config.yml
-      ansible.builtin.template:
-        src: web-config.yml.j2
-        dest: "{{ prometheus_config_dir }}/web-config.yml"
-        owner: "{{ prometheus_system_user }}"
-        group: "{{ prometheus_system_group }}"
-        mode: "0640"
-      notify: Restart prometheus
+- name: Deploy web-config.yml
+  when: prometheus_tls_enabled or prometheus_basic_auth_enabled
+  ansible.builtin.template:
+    src: web-config.yml.j2
+    dest: "{{ prometheus_config_dir }}/web-config.yml"
+    owner: "{{ prometheus_system_user }}"
+    group: "{{ prometheus_system_group }}"
+    mode: "0640"
+  notify: Restart prometheus
 
 
 

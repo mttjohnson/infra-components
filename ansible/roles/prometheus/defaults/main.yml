@@ -71,3 +71,16 @@ prometheus_tls_key_path: "{{ prometheus_tls_cert_dir }}/prometheus.key"
 # Source paths used when prometheus_tls_mode == "symlink"
 prometheus_tls_cert_symlink_src: ""
 prometheus_tls_key_symlink_src: ""
+
+# Basic authentication configuration
+# Set to true to require HTTP basic authentication for the web UI and API.
+# NOTE: enabling basic auth without TLS sends credentials in plain text.
+prometheus_basic_auth_enabled: false
+prometheus_basic_auth_username: prometheus
+
+# Paths on the remote host where the generated credentials are stored (root:root, 0600).
+# The plain text password is generated once on the remote host and never leaves it.
+# The bcrypt hash is derived from the plain text and cached here so that
+# web-config.yml stays stable across playbook runs, preventing unnecessary restarts.
+prometheus_basic_auth_password_file: /root/prometheus_basic_auth_password.txt
+prometheus_basic_auth_hash_file: /root/prometheus_basic_auth_password_hash.txt
