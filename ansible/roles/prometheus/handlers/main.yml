@@ -1,4 +1,13 @@
 ---
+- name: Validate prometheus config
+  ansible.builtin.command:
+    cmd: "{{ prometheus_binary_install_dir }}/promtool check config {{ prometheus_config_dir }}/prometheus.yml"
+  changed_when: false
+  ignore_errors: "{{ ansible_check_mode }}"
+  listen:
+    - Reload prometheus
+    - Restart prometheus
+
 - name: Restart prometheus
   ansible.builtin.systemd_service:
     name: prometheus
