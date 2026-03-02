@@ -47,6 +47,8 @@ prometheus_storage_retention_size: 0
 # Example: ["--web.enable-admin-api", "--web.enable-lifecycle"]
 prometheus_extra_flags: []
 
+prometheus_scrape_hostname: localhost
+
 # TLS configuration
 # Set to true to enable HTTPS via Prometheus's native web config
 prometheus_tls_enabled: false
@@ -61,6 +63,7 @@ prometheus_tls_enabled: false
 #                 typically 0600 root:root, so you will need a deploy hook or
 #                 group membership to grant read access before the service starts.
 prometheus_tls_mode: self_signed
+prometheus_tls_insecure_skip_verify: true
 
 # Destination paths for the certificate and key inside prometheus_config_dir.
 # Prometheus reads these paths from web-config.yml; change only if necessary.
@@ -77,6 +80,10 @@ prometheus_tls_key_symlink_src: ""
 # NOTE: enabling basic auth without TLS sends credentials in plain text.
 prometheus_basic_auth_enabled: false
 prometheus_basic_auth_username: prometheus
+
+# For prometheus to scrape it's own metrics it needs to be able to authenticate
+# and the password needs to be stored as cleartext in a file that config points to
+prometheus_basic_auth_scrape_pass: "{{ prometheus_config_dir }}/scrape-password"
 
 # Paths on the remote host where the generated credentials are stored (root:root, 0600).
 # The plain text password is generated once on the remote host and never leaves it.

@@ -214,6 +214,22 @@
       no_log: true
       ignore_errors: "{{ ansible_check_mode }}"
 
+    - name: Check if scrape password file exists on remote host
+      ansible.builtin.stat:
+        path: "{{ prometheus_basic_auth_scrape_pass }}"
+      register: _prometheus_basic_auth_scrape_pass_stat
+
+    - name: Create scrape password file
+      ansible.builtin.copy:
+        content: |
+          {{ _prometheus_basic_auth_password }}
+        dest: "{{ prometheus_basic_auth_scrape_pass }}"
+        owner: "{{ prometheus_system_user }}"
+        group: "{{ prometheus_system_group }}"
+        mode: "600"
+      no_log: true
+      when: not _prometheus_basic_auth_scrape_pass_stat.stat.exists
+
 
 
 # ----- TLS setup -----
@@ -288,7 +304,7 @@
     dest: "{{ prometheus_config_dir }}/prometheus.yml"
     owner: "{{ prometheus_system_user }}"
     group: "{{ prometheus_system_group }}"
-    mode: "0644"
+    mode: "0640"
   notify: Reload prometheus
 
 - name: Deploy prometheus systemd service unit

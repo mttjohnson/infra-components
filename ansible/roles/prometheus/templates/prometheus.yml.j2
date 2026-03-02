@@ -9,7 +9,12 @@ scrape_configs:
 {% if prometheus_tls_enabled %}
     scheme: https
     tls_config:
-      insecure_skip_verify: true
+      insecure_skip_verify: {{ prometheus_tls_insecure_skip_verify }}
+{% endif %}
+{% if prometheus_basic_auth_enabled %}
+    basic_auth:
+      username: {{ prometheus_basic_auth_username }}
+      password_file: {{ prometheus_basic_auth_scrape_pass }}
 {% endif %}
     static_configs:
-      - targets: ["localhost:9090"]
+      - targets: ["{{ prometheus_scrape_hostname }}:9090"]
