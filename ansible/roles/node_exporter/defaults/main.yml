@@ -1,0 +1,17 @@
+---
+# Node Exporter role defaults
+node_exporter_version: "latest"
+node_exporter_github_repo: "prometheus/node_exporter"
+node_exporter_binary_install_dir: "/usr/local/bin"
+node_exporter_config_dir: "/etc/node_exporter"
+node_exporter_system_user: "node_exporter"
+node_exporter_system_group: "node_exporter"
+node_exporter_system_user_extra_groups: []
+node_exporter_web_listen_address: "0.0.0.0:9100"
+node_exporter_extra_flags: []
+node_exporter_archive_url: "https://github.com/{{ node_exporter_github_repo }}/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+node_exporter_checksums_url: "https://github.com/{{ node_exporter_github_repo }}/releases/download/v{{ node_exporter_version }}/sha256sums.txt"
+node_exporter_download_dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+node_exporter_extract_dest: "/tmp/node_exporter-{{ node_exporter_version }}"
+node_exporter_binaries:
+  - node_exporter
