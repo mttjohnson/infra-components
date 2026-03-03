@@ -48,6 +48,7 @@ prometheus_storage_retention_size: 0
 prometheus_extra_flags: []
 
 prometheus_scrape_hostname: localhost
+prometheus_scrape_port: 9090
 
 # TLS configuration
 # Set to true to enable HTTPS via Prometheus's native web config

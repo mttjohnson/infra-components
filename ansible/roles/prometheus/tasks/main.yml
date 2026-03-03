@@ -1,5 +1,4 @@
 ---
-
 # ----- Resolve version -----
 
 - name: Resolve latest prometheus version from GitHub API
@@ -22,8 +21,6 @@
         prometheus_version: "{{ (prometheus_latest_release.json.tag_name | replace('v', '')) }}"
       run_once: true
 
-
-
 # ----- Create system user and group -----
 
 - name: Create prometheus system group
@@ -42,8 +39,6 @@
     home: "{{ prometheus_config_dir }}"
     create_home: false
 
-
-
 # ----- Download, verify, and install binary -----
 
 - name: Create extract directory
@@ -59,9 +54,9 @@
   register: prometheus_checksums_response
   check_mode: false
 
-- name: Use the contents
-  ansible.builtin.debug:
-    msg: "{{ prometheus_checksums_response.content }}"
+# - name: Use the contents
+#   ansible.builtin.debug:
+#     msg: "{{ prometheus_checksums_response.content }}"
 
 - name: Extract expected checksum for downloaded archive
   ansible.builtin.set_fact:
@@ -98,8 +93,6 @@
   ignore_errors: "{{ ansible_check_mode }}"
   notify: Restart prometheus
 
-
-
 # ----- Create directories -----
 
 - name: Create prometheus config directory
@@ -118,8 +111,6 @@
     group: "{{ prometheus_system_group }}"
     mode: "0755"
 
-
-
 # ----- Basic authentication setup -----
 
 - name: Configure basic authentication credentials
@@ -131,7 +122,7 @@
       register: prometheus_basic_auth_password_file_stat
 
     - name: Generate new unique secret value
-      ansible.builtin.shell: 
+      ansible.builtin.shell:
         cmd: |
           LC_ALL=C tr -dc 'A-Za-z0-9%+,-./_' </dev/urandom | head -c 32
       no_log: true
@@ -146,10 +137,9 @@
         dest: "{{ prometheus_basic_auth_password_file }}"
         owner: root
         group: root
-        mode: "600"
+        mode: "0600"
       no_log: true
       when: not prometheus_basic_auth_password_file_stat.stat.exists
-
 
     - name: Get secret value file contents
       ansible.builtin.slurp:
@@ -226,11 +216,9 @@
         dest: "{{ prometheus_basic_auth_scrape_pass }}"
         owner: "{{ prometheus_system_user }}"
         group: "{{ prometheus_system_group }}"
-        mode: "600"
+        mode: "0600"
       no_log: true
       when: not _prometheus_basic_auth_scrape_pass_stat.stat.exists
-
-
 
 # ----- TLS setup -----
 
@@ -294,8 +282,6 @@
     mode: "0640"
   notify: Restart prometheus
 
-
-
 # ----- Deploy configuration -----
 
 - name: Deploy prometheus configuration file
@@ -315,8 +301,6 @@
     group: root
     mode: "0644"
   notify: Restart prometheus
-
-
 
 # ----- Enable and start service -----
 

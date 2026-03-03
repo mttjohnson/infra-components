@@ -17,4 +17,4 @@ scrape_configs:
       password_file: {{ prometheus_basic_auth_scrape_pass }}
 {% endif %}
     static_configs:
-      - targets: ["{{ prometheus_scrape_hostname }}:9090"]
+      - targets: ["{{ prometheus_scrape_hostname }}:{{ prometheus_scrape_port }}"]
