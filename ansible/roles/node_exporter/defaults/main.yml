@@ -15,3 +15,39 @@ node_exporter_download_dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar
 node_exporter_extract_dest: "/tmp/node_exporter-{{ node_exporter_version }}"
 node_exporter_binaries:
   - node_exporter
+
+# Set true to force re-download and reinstall even if correct version is already installed
+node_exporter_force_reinstall: false
+
+# TLS configuration
+# Set to true to enable HTTPS via node_exporter's native web config
+node_exporter_tls_enabled: false
+
+# Certificate source: "self_signed" generates a self-signed cert; "symlink" creates
+# symlinks to an externally-managed certificate and key.
+node_exporter_tls_mode: self_signed
+
+# Destination paths for the certificate and key inside node_exporter_config_dir
+node_exporter_tls_cert_dir: "{{ node_exporter_config_dir }}/tls"
+node_exporter_tls_cert_path: "{{ node_exporter_tls_cert_dir }}/node_exporter.crt"
+node_exporter_tls_key_path: "{{ node_exporter_tls_cert_dir }}/node_exporter.key"
+
+# Source paths used only when node_exporter_tls_mode == "symlink"
+node_exporter_tls_cert_symlink_src: ""
+node_exporter_tls_key_symlink_src: ""
+
+# Basic authentication configuration
+# When enabled, node_exporter requires HTTP basic authentication.
+# NOTE: enabling basic auth without TLS sends credentials in plain text.
+# Set node_exporter_basic_auth_password_hash to a pre-computed bcrypt hash.
+# Generate with: htpasswd -nB username | cut -d: -f2
+#            or: python3 -c "import bcrypt; print(bcrypt.hashpw(b'pw', bcrypt.gensalt()).decode())"
+node_exporter_basic_auth_enabled: false
+node_exporter_basic_auth_username: node_exporter
+node_exporter_basic_auth_password_hash: ""
+
+# Collector configuration
+# node_exporter_enabled_collectors:  list of non-default collectors to enable  (e.g. ["systemd", "processes"])
+# node_exporter_disabled_collectors: list of default collectors to disable     (e.g. ["mdadm"])
+node_exporter_enabled_collectors: []
+node_exporter_disabled_collectors: []

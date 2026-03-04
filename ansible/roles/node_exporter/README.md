@@ -38,6 +38,7 @@ node_exporter_version: "1.8.0"
 | `node_exporter_system_user` | `node_exporter` | System user to run the service |
 | `node_exporter_system_group` | `node_exporter` | System group for the service user |
 | `node_exporter_system_user_extra_groups` | `[]` | Additional groups to add the system user to |
+| `node_exporter_force_reinstall` | `false` | Set `true` to force re-download and reinstall even if the correct version is already installed |
 
 ### Service
 
@@ -45,44 +46,75 @@ node_exporter_version: "1.8.0"
 |---|---|---|
 | `node_exporter_web_listen_address` | `0.0.0.0:9100` | Listen address for the web UI and API |
 | `node_exporter_extra_flags` | `[]` | Additional command-line flags passed to the node_exporter binary |
+| `node_exporter_enabled_collectors` | `[]` | Non-default collectors to enable (e.g. `["systemd", "processes"]`) |
+| `node_exporter_disabled_collectors` | `[]` | Default collectors to disable (e.g. `["mdadm"]`) |
 
-### Checks Mode Compatibility
+### TLS
 
-This role is designed to work in check mode (`--check` flag) to allow for review of changes before applying them. All tasks support check mode with proper `ignore_errors: "{{ ansible_check_mode }}"` configuration.
+| Variable | Default | Description |
+|---|---|---|
+| `node_exporter_tls_enabled` | `false` | Enable HTTPS via node_exporter's native web config |
+| `node_exporter_tls_mode` | `self_signed` | Certificate source: `self_signed` generates a self-signed cert; `symlink` creates symlinks to an externally-managed cert and key |
+| `node_exporter_tls_cert_dir` | `{{ node_exporter_config_dir }}/tls` | Directory for certificate files |
+| `node_exporter_tls_cert_path` | `{{ node_exporter_tls_cert_dir }}/node_exporter.crt` | Path to the TLS certificate |
+| `node_exporter_tls_key_path` | `{{ node_exporter_tls_cert_dir }}/node_exporter.key` | Path to the TLS private key |
+| `node_exporter_tls_cert_symlink_src` | `""` | Source path for cert symlink (used when `tls_mode == "symlink"`) |
+| `node_exporter_tls_key_symlink_src` | `""` | Source path for key symlink (used when `tls_mode == "symlink"`) |
+
+### Basic Auth
+
+| Variable | Default | Description |
+|---|---|---|
+| `node_exporter_basic_auth_enabled` | `false` | Require HTTP basic authentication on the metrics endpoint |
+| `node_exporter_basic_auth_username` | `node_exporter` | Username for basic auth |
+| `node_exporter_basic_auth_password_hash` | `""` | Pre-computed bcrypt hash of the password |
+
+> **Note:** Enabling basic auth without TLS sends credentials in plain text.
+
+#### Generating a password hash
+
+```bash
+# Using htpasswd (apache2-utils)
+htpasswd -nB username | cut -d: -f2
+
+# Using Python
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+```
+
+### TLS + Basic Auth example
+
+```yaml
+node_exporter_tls_enabled: true
+node_exporter_tls_mode: self_signed
+
+node_exporter_basic_auth_enabled: true
+node_exporter_basic_auth_username: node_exporter
+node_exporter_basic_auth_password_hash: "$2y$12$..."  # bcrypt hash
+```
+
+### Collector configuration example
+
+```yaml
+# Enable non-default collectors
+node_exporter_enabled_collectors:
+  - systemd
+  - processes
+
+# Disable default collectors
+node_exporter_disabled_collectors:
+  - mdadm
+```
+
+### Check Mode Compatibility
+
+This role is designed to work in check mode (`--check` flag). When the binary is not yet installed
+or the version differs, a debug message reports what would be installed and all download/extract/copy
+tasks are cleanly skipped (not errored) in check mode.
 
 ## What gets installed
 
 - **Binary**: `node_exporter` in `/usr/local/bin/`
-- **Config**: `/etc/node_exporter/` (empty by default, but directory created)
+- **Config**: `/etc/node_exporter/` (directory always created; `web-config.yml` deployed when TLS or basic auth is enabled)
 - **Service**: `node_exporter.service` systemd unit with security hardening (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`, etc.)
 - **User**: `node_exporter` system user with `nologin` shell
 
-## TODO
-
-- [ ] **Architecture detection** — The download URL is hardcoded to `linux-amd64`. Detect the
-      target host's architecture (`ansible_architecture`) and map it to the GitHub release
-      filename convention (`amd64`, `arm64`, `armv7`, etc.) so the role works on non-x86_64 hosts.
-
-- [ ] **Idempotency / version check** — The role always downloads and reinstalls the archive on
-      every run. Add a `stat` + `slurp`/`command` check to compare the installed binary version
-      against `node_exporter_version` and skip the download/extract/copy pipeline when already
-      up to date. This reduces network traffic and makes the play faster for steady-state runs.
-
-- [ ] **Cleaner check mode for download/extract pipeline** — In check mode the extract and copy
-      tasks fail (errors are ignored) because the temp directory is never created. Replace the
-      `ignore_errors: "{{ ansible_check_mode }}"` pattern on those tasks with
-      `when: not ansible_check_mode` so they are clearly skipped rather than erroring silently.
-      A single `ansible.builtin.debug` task that summarises what would be installed keeps the
-      check mode output informative without noise.
-
-- [ ] **Web config file (TLS / basic auth)** — node_exporter supports a `--web.config.file`
-      flag backed by a `web-config.yml` (same format as Prometheus). Add variables and a
-      template to optionally enable TLS and/or basic authentication on the metrics endpoint,
-      consistent with how the `prometheus` role exposes `prometheus_tls_enabled` and
-      `prometheus_basic_auth_enabled`.
-
-- [ ] **Collector configuration** — Add a variable (e.g. `node_exporter_enabled_collectors`,
-      `node_exporter_disabled_collectors`) that emits `--collector.<name>` /
-      `--no-collector.<name>` flags in the service unit, allowing callers to enable non-default
-      collectors (e.g. `systemd`, `processes`) or disable unwanted ones without reaching into
-      `node_exporter_extra_flags`.

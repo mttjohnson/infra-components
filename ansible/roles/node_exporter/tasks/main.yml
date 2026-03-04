@@ -39,13 +39,44 @@
     home: "{{ node_exporter_config_dir }}"
     create_home: false
 
+# ----- Check current installation -----
+
+- name: Check if node_exporter binary exists
+  ansible.builtin.stat:
+    path: "{{ node_exporter_binary_install_dir }}/node_exporter"
+  register: _node_exporter_binary_stat
+  check_mode: false
+
+- name: Get installed node_exporter version
+  ansible.builtin.command:
+    cmd: "{{ node_exporter_binary_install_dir }}/node_exporter --version"
+  register: _node_exporter_version_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _node_exporter_binary_stat.stat.exists
+
+- name: Set node_exporter installation required flag
+  ansible.builtin.set_fact:
+    _node_exporter_needs_install: >-
+      {{ (node_exporter_force_reinstall | bool)
+         or not (_node_exporter_binary_stat.stat.exists | bool)
+         or ((_node_exporter_version_raw | default({})).stdout | default('')
+             | regex_search('[0-9]+\.[0-9]+\.[0-9]+')) != node_exporter_version }}
+
 # ----- Download, verify, and install binary -----
+
+- name: Report planned installation (check mode)
+  ansible.builtin.debug:
+    msg: "Would install node_exporter {{ node_exporter_version }}"
+  when: (_node_exporter_needs_install | bool) and ansible_check_mode
 
 - name: Create extract directory
   ansible.builtin.file:
     path: "{{ node_exporter_extract_dest }}"
     state: directory
     mode: "0755"
+  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
 
 - name: Fetch sha256sums from GitHub
   ansible.builtin.uri:
@@ -53,23 +84,15 @@
     return_content: yes
   register: node_exporter_checksums_response
   check_mode: false
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
 
 - name: Extract expected checksum for downloaded archive
-  when: not ansible_check_mode
   ansible.builtin.set_fact:
     node_exporter_expected_checksum: >-
       {{ node_exporter_checksums_response.content
          | regex_search('^([0-9a-f]+)\s+' + (node_exporter_download_dest | basename | regex_escape) + '\s*$', '\1', multiline=True)
          | first }}
-
-- name: Download node_exporter archive
-  ansible.builtin.get_url:
-    url: "{{ node_exporter_archive_url }}"
-    dest: "{{ node_exporter_download_dest }}"
-    mode: "0644"
-  when: ansible_check_mode
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
 
 - name: Download node_exporter archive with checksum
   ansible.builtin.get_url:
@@ -77,8 +100,7 @@
     dest: "{{ node_exporter_download_dest }}"
     checksum: "sha256:{{ node_exporter_expected_checksum }}"
     mode: "0644"
-  when: not ansible_check_mode
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
 
 - name: Extract node_exporter archive
   ansible.builtin.unarchive:
@@ -87,7 +109,7 @@
     remote_src: true
     extra_opts:
       - --strip-components=1
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
 
 - name: Copy node_exporter binary to install directory
   ansible.builtin.copy:
@@ -98,7 +120,7 @@
     group: root
     mode: "0755"
   loop: "{{ node_exporter_binaries }}"
-  ignore_errors: "{{ ansible_check_mode }}"
+  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
   notify: Restart node_exporter
 
 # ----- Create directories -----
@@ -111,7 +133,70 @@
     group: "{{ node_exporter_system_group }}"
     mode: "0755"
 
+# ----- TLS setup -----
+
+- name: Configure TLS
+  when: node_exporter_tls_enabled
+  block:
+    - name: Create TLS certificate directory
+      ansible.builtin.file:
+        path: "{{ node_exporter_tls_cert_dir }}"
+        state: directory
+        owner: "{{ node_exporter_system_user }}"
+        group: "{{ node_exporter_system_group }}"
+        mode: "0750"
+
+    - name: Generate self-signed certificate and key
+      when: node_exporter_tls_mode == "self_signed"
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:4096
+          -keyout {{ node_exporter_tls_key_path }}
+          -out {{ node_exporter_tls_cert_path }}
+          -days 3650 -nodes
+          -subj "/CN=node_exporter"
+        creates: "{{ node_exporter_tls_cert_path }}"
+      notify: Restart node_exporter
+
+    - name: Ensure self-signed certificate files are owned by node_exporter
+      when: node_exporter_tls_mode == "self_signed"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: "{{ node_exporter_system_user }}"
+        group: "{{ node_exporter_system_group }}"
+        mode: "0640"
+      loop:
+        - "{{ node_exporter_tls_cert_path }}"
+        - "{{ node_exporter_tls_key_path }}"
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Symlink certificate from external path
+      when: node_exporter_tls_mode == "symlink"
+      ansible.builtin.file:
+        src: "{{ node_exporter_tls_cert_symlink_src }}"
+        dest: "{{ node_exporter_tls_cert_path }}"
+        state: link
+      notify: Restart node_exporter
+
+    - name: Symlink key from external path
+      when: node_exporter_tls_mode == "symlink"
+      ansible.builtin.file:
+        src: "{{ node_exporter_tls_key_symlink_src }}"
+        dest: "{{ node_exporter_tls_key_path }}"
+        state: link
+      notify: Restart node_exporter
+
 # ----- Deploy configuration -----
+
+- name: Deploy web-config.yml
+  when: node_exporter_tls_enabled or node_exporter_basic_auth_enabled
+  ansible.builtin.template:
+    src: web-config.yml.j2
+    dest: "{{ node_exporter_config_dir }}/web-config.yml"
+    owner: "{{ node_exporter_system_user }}"
+    group: "{{ node_exporter_system_group }}"
+    mode: "0640"
+  notify: Restart node_exporter
 
 - name: Deploy node_exporter systemd service unit
   ansible.builtin.template:
@@ -128,7 +213,6 @@
   ansible.builtin.command:
     cmd: "{{ node_exporter_binary_install_dir }}/node_exporter --version"
   changed_when: false
-  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Ensure handlers are notified now
   ansible.builtin.meta: flush_handlers
