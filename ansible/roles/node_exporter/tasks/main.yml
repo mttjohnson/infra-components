@@ -124,7 +124,7 @@
 
 # ----- Enable and start service -----
 
-- name: Validate node_exporter configuration
+- name: Verify node_exporter binary is executable
   ansible.builtin.command:
     cmd: "{{ node_exporter_binary_install_dir }}/node_exporter --version"
   changed_when: false

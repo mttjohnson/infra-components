@@ -7,7 +7,7 @@ After=network-online.target
 User={{ node_exporter_system_user }}
 Group={{ node_exporter_system_group }}
 Type=simple
-ExecStart={{ node_exporter_binary_install_dir }}/node_exporter {{ node_exporter_extra_flags | join(' ') }} --web.listen-address={{ node_exporter_web_listen_address }}
+ExecStart={{ node_exporter_binary_install_dir }}/node_exporter{{ (' ' + node_exporter_extra_flags | join(' ')) if node_exporter_extra_flags else '' }} --web.listen-address={{ node_exporter_web_listen_address }}
 Restart=always
 RestartSec=5
 
@@ -16,7 +16,6 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths={{ node_exporter_config_dir }}
-ReadWriteDirectories={{ node_exporter_config_dir }}
 
 [Install]
 WantedBy=multi-user.target

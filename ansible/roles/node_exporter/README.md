@@ -32,6 +32,7 @@ node_exporter_version: "1.8.0"
 | Variable | Default | Description |
 |---|---|---|
 | `node_exporter_version` | `latest` | Version to install, or `latest` to auto-detect |
+| `node_exporter_github_repo` | `prometheus/node_exporter` | GitHub repository used to resolve releases and download URLs |
 | `node_exporter_binary_install_dir` | `/usr/local/bin` | Where to install the `node_exporter` binary |
 | `node_exporter_config_dir` | `/etc/node_exporter` | Configuration directory |
 | `node_exporter_system_user` | `node_exporter` | System user to run the service |
@@ -56,8 +57,32 @@ This role is designed to work in check mode (`--check` flag) to allow for review
 - **Service**: `node_exporter.service` systemd unit with security hardening (`ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`, etc.)
 - **User**: `node_exporter` system user with `nologin` shell
 
-## Next steps
+## TODO
 
-- Consider adding support for systemd socket activation
-- Add configuration file support for enabling specific collectors
-- Add support for managing node_exporter configuration via templates
+- [ ] **Architecture detection** — The download URL is hardcoded to `linux-amd64`. Detect the
+      target host's architecture (`ansible_architecture`) and map it to the GitHub release
+      filename convention (`amd64`, `arm64`, `armv7`, etc.) so the role works on non-x86_64 hosts.
+
+- [ ] **Idempotency / version check** — The role always downloads and reinstalls the archive on
+      every run. Add a `stat` + `slurp`/`command` check to compare the installed binary version
+      against `node_exporter_version` and skip the download/extract/copy pipeline when already
+      up to date. This reduces network traffic and makes the play faster for steady-state runs.
+
+- [ ] **Cleaner check mode for download/extract pipeline** — In check mode the extract and copy
+      tasks fail (errors are ignored) because the temp directory is never created. Replace the
+      `ignore_errors: "{{ ansible_check_mode }}"` pattern on those tasks with
+      `when: not ansible_check_mode` so they are clearly skipped rather than erroring silently.
+      A single `ansible.builtin.debug` task that summarises what would be installed keeps the
+      check mode output informative without noise.
+
+- [ ] **Web config file (TLS / basic auth)** — node_exporter supports a `--web.config.file`
+      flag backed by a `web-config.yml` (same format as Prometheus). Add variables and a
+      template to optionally enable TLS and/or basic authentication on the metrics endpoint,
+      consistent with how the `prometheus` role exposes `prometheus_tls_enabled` and
+      `prometheus_basic_auth_enabled`.
+
+- [ ] **Collector configuration** — Add a variable (e.g. `node_exporter_enabled_collectors`,
+      `node_exporter_disabled_collectors`) that emits `--collector.<name>` /
+      `--no-collector.<name>` flags in the service unit, allowing callers to enable non-default
+      collectors (e.g. `systemd`, `processes`) or disable unwanted ones without reaching into
+      `node_exporter_extra_flags`.

@@ -6,3 +6,4 @@
     daemon_reload: true
     enabled: true
   ignore_errors: "{{ ansible_check_mode }}"
+  listen: Restart node_exporter
