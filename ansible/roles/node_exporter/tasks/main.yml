@@ -76,7 +76,7 @@
     path: "{{ node_exporter_extract_dest }}"
     state: directory
     mode: "0755"
-  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
+  when: _node_exporter_needs_install | bool
 
 - name: Fetch sha256sums from GitHub
   ansible.builtin.uri:
@@ -84,7 +84,7 @@
     return_content: yes
   register: node_exporter_checksums_response
   check_mode: false
-  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
+  when: _node_exporter_needs_install | bool
 
 - name: Extract expected checksum for downloaded archive
   ansible.builtin.set_fact:
@@ -92,7 +92,7 @@
       {{ node_exporter_checksums_response.content
          | regex_search('^([0-9a-f]+)\s+' + (node_exporter_download_dest | basename | regex_escape) + '\s*$', '\1', multiline=True)
          | first }}
-  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
+  when: _node_exporter_needs_install | bool
 
 - name: Download node_exporter archive with checksum
   ansible.builtin.get_url:
@@ -100,7 +100,8 @@
     dest: "{{ node_exporter_download_dest }}"
     checksum: "sha256:{{ node_exporter_expected_checksum }}"
     mode: "0644"
-  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
+  when: _node_exporter_needs_install | bool
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Extract node_exporter archive
   ansible.builtin.unarchive:
@@ -109,7 +110,8 @@
     remote_src: true
     extra_opts:
       - --strip-components=1
-  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
+  when: _node_exporter_needs_install | bool
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Copy node_exporter binary to install directory
   ansible.builtin.copy:
@@ -120,7 +122,8 @@
     group: root
     mode: "0755"
   loop: "{{ node_exporter_binaries }}"
-  when: (_node_exporter_needs_install | bool) and not ansible_check_mode
+  when: _node_exporter_needs_install | bool
+  ignore_errors: "{{ ansible_check_mode }}"
   notify: Restart node_exporter
 
 # ----- Create directories -----
@@ -213,6 +216,7 @@
   ansible.builtin.command:
     cmd: "{{ node_exporter_binary_install_dir }}/node_exporter --version"
   changed_when: false
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Ensure handlers are notified now
   ansible.builtin.meta: flush_handlers
