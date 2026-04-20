@@ -1,0 +1,4 @@
+---
+claude_code_user: "{{ ansible_facts['user_id'] }}"
+claude_code_channel: stable  # 'stable' or 'latest'
+claude_code_force_reinstall: false

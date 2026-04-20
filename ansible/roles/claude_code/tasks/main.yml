@@ -1,0 +1,68 @@
+---
+- name: Ensure prerequisites are present
+  ansible.builtin.package:
+    name:
+      - curl
+      - ripgrep
+    state: present
+  become: true
+
+- name: Look up target user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ claude_code_user }}"
+  become: true
+
+- name: Set per-user install paths
+  ansible.builtin.set_fact:
+    claude_code_home: "{{ ansible_facts['getent_passwd'][claude_code_user][4] }}"
+    claude_code_install_dir: "{{ ansible_facts['getent_passwd'][claude_code_user][4] }}/.local/bin"
+    claude_code_binary: "{{ ansible_facts['getent_passwd'][claude_code_user][4] }}/.local/bin/claude"
+
+- name: Check for existing claude binary
+  ansible.builtin.stat:
+    path: "{{ claude_code_binary }}"
+  register: claude_bin
+  become: true
+  become_user: "{{ claude_code_user }}"
+
+- name: Get installed version (if present)
+  ansible.builtin.command: "{{ claude_code_binary }} --version"
+  register: claude_version
+  when: claude_bin.stat.exists
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ claude_code_user }}"
+
+- name: Install Claude Code via native installer
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -fsSL https://claude.ai/install.sh | bash -s {{ claude_code_channel }}
+  args:
+    executable: /bin/bash
+    creates: "{{ claude_code_binary }}"
+  when: not claude_bin.stat.exists or claude_code_force_reinstall
+  become: true
+  become_user: "{{ claude_code_user }}"
+  environment:
+    HOME: "{{ claude_code_home }}"
+
+- name: Ensure ~/.local/bin is on PATH in .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ claude_code_home }}/.bashrc"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    regexp: '^export PATH="\$HOME/\.local/bin:\$PATH"$'
+    create: true
+    mode: "0644"
+    owner: "{{ claude_code_user }}"
+    group: "{{ claude_code_user }}"
+  become: true
+  become_user: "{{ claude_code_user }}"
+
+- name: Verify installation
+  ansible.builtin.command: "{{ claude_code_binary }} --version"
+  register: claude_verify
+  changed_when: false
+  become: true
+  become_user: "{{ claude_code_user }}"
