@@ -1,0 +1,256 @@
+---
+- name: Ensure prerequisites are installed
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - openssl
+    state: present
+    update_cache: true
+
+
+
+# Incus - Add package repository
+- name: Create keyrings path
+  ansible.builtin.file:
+    path: /usr/share/keyrings/
+    mode: 0755
+    state: directory
+
+- name: Check for Zabbly GPG key
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/zabbly.gpg
+  register: zabbly_gpg_key_stat
+
+- name: Download Zabbly armored gpg public key
+  ansible.builtin.get_url:
+    url: "{{ incus_setup_zabbly_gpg_key_url }}"
+    dest: "{{ incus_setup_zabbly_gpg_key_download_path }}"
+    checksum: "{{ incus_setup_zabbly_gpg_key_checksum }}"
+  register: zabbly_gpg_key_download
+  # when: not zabbly_gpg_key_stat.stat.exists
+
+- name: planning to run - Add Zabbly GPG key
+  ansible.builtin.debug:
+    msg: |-
+      cat {{ incus_setup_zabbly_gpg_key_download_path }} | gpg --dearmor --batch --yes -o {{ incus_setup_zabbly_gpg_key_install_path }}
+  changed_when: ansible_check_mode
+  when: zabbly_gpg_key_download.changed
+- name: Add Zabbly GPG key
+  ansible.builtin.shell:
+    cmd: |-
+      cat {{ incus_setup_zabbly_gpg_key_download_path }} | gpg --dearmor --batch --yes -o {{ incus_setup_zabbly_gpg_key_install_path }}
+  when: zabbly_gpg_key_download.changed
+
+- name: Get DPKG architecture (for incus.sources template)
+  shell: dpkg --print-architecture
+  register: dpkg_architecture
+  changed_when: false
+  check_mode: no
+
+- name: Add Zabbly Incus package repository
+  ansible.builtin.deb822_repository:
+    name: "zabbly-incus-{{ incus_release }}"
+    types: deb
+    uris: "https://pkgs.zabbly.com/incus/{{ incus_release }}/"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    architectures: "{{ dpkg_architecture.stdout }}"
+    signed_by: /usr/share/keyrings/zabbly.gpg
+    state: present
+    enabled: true
+  notify: Update apt cache
+
+- name: Ensure handlers are notified now
+  ansible.builtin.meta: flush_handlers
+
+
+
+# Install Incus Client
+- name: Install Incus client
+  ansible.builtin.apt:
+    name: incus-client
+    state: present
+    update_cache: true
+
+# Generate self-signed cert to use for TLS authentication with Incus host
+- name: Ensure client config directory exists
+  ansible.builtin.file:
+    path: "{{ incus_client_config_dir }}"
+    state: directory
+    owner: "{{ incus_trust_user }}"
+    group: "{{ incus_trust_group }}"
+    mode: '0700'
+
+- name: Generate ECDSA P-384 private key
+  community.crypto.openssl_privatekey:
+    path: "{{ incus_client_config_dir }}/client.key"
+    type: ECC
+    curve: secp384r1
+    owner: "{{ incus_trust_user }}"
+    group: "{{ incus_trust_group }}"
+    mode: '0600'
+    # regenerate: never  # default; prevents clobbering an existing key
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Generate CSR for Incus client certificate
+  community.crypto.openssl_csr:
+    path: "{{ incus_client_config_dir }}/client.csr"
+    privatekey_path: "{{ incus_client_config_dir }}/client.key"
+    organization_name: "{{ incus_client_o }}"
+    common_name: "{{ incus_client_cn }}"
+    digest: sha384
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    key_usage_critical: true
+    extended_key_usage:
+      - clientAuth
+    basic_constraints:
+      - 'CA:FALSE'
+    basic_constraints_critical: true
+    owner: "{{ incus_trust_user }}"
+    group: "{{ incus_trust_group }}"
+    mode: '0600'
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Generate self-signed Incus client certificate
+  community.crypto.x509_certificate:
+    path: "{{ incus_client_config_dir }}/client.crt"
+    privatekey_path: "{{ incus_client_config_dir }}/client.key"
+    csr_path: "{{ incus_client_config_dir }}/client.csr"
+    provider: selfsigned
+    selfsigned_digest: sha384
+    selfsigned_not_after: "+3650d"
+    owner: "{{ incus_trust_user }}"
+    group: "{{ incus_trust_group }}"
+    mode: '0644'
+  ignore_errors: "{{ ansible_check_mode }}"
+
+
+
+# Trust client cert on host
+- name: Slurp Incus client certificate contents
+  ansible.builtin.slurp:
+    src: "{{ incus_client_config_dir }}/client.crt"
+  register: incus_client_cert_slurp
+
+- name: Set client certificate content as fact
+  ansible.builtin.set_fact:
+    incus_client_cert: "{{ incus_client_cert_slurp.content | b64decode }}"
+
+- name: Get certificate fingerprint
+  ansible.builtin.command:
+    cmd: openssl x509 -in {{ incus_client_config_dir }}/client.crt -noout -fingerprint -sha256
+  register: incus_cert_fingerprint
+  changed_when: false
+  check_mode: no
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Extract full fingerprint (lowercase hex, no colons)
+  ansible.builtin.set_fact:
+    incus_cert_full_fp: "{{ incus_cert_fingerprint.stdout.split('=')[1] | replace(':', '') | lower }}"
+
+- name: Check if certificate is already trusted on remote
+  ansible.builtin.shell:
+    cmd: |
+      incus config trust list {{ incus_trust_remote_target }}: --format json \
+        | jq -e --arg fp "${CERT_FP}" 'any(.[]; .fingerprint == $fp)'
+  args:
+    executable: /bin/bash
+  environment:
+    CERT_FP: "{{ incus_cert_full_fp }}"
+  register: incus_trust_check
+  changed_when: false
+  check_mode: no
+  ignore_errors: "{{ ansible_check_mode }}"
+  failed_when: incus_trust_check.rc not in [0, 1]
+  delegate_to: localhost # Execute locally, not on the remote server
+  become: false # Disable any use of sudo for this task when running local commands
+
+- name: planning to run - Add client certificate to remote Incus trust store
+  ansible.builtin.debug:
+    msg: |-
+      incus config trust add-certificate {{ incus_trust_remote_target }}: <(echo "${CLIENT_CERT}") \
+        --name {{ incus_trust_name | quote }} \
+        --description {{ incus_trust_description | quote }}
+  changed_when: ansible_check_mode
+  when: incus_trust_check.rc == 1
+- name: Add client certificate to remote Incus trust store
+  ansible.builtin.shell:
+    cmd: |
+      incus config trust add-certificate {{ incus_trust_remote_target }}: <(echo "${CLIENT_CERT}") \
+        --name {{ incus_trust_name | quote }} \
+        --description {{ incus_trust_description | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    CLIENT_CERT: "{{ incus_client_cert }}"
+  delegate_to: localhost # Execute locally, not on the remote server
+  become: false # Disable any use of sudo for this task when running local commands
+  when: incus_trust_check.rc == 1
+  changed_when: not ansible_check_mode
+
+
+
+# Add the Incus remote
+- name: List existing Incus remotes
+  ansible.builtin.command:
+    cmd: incus remote list --format json
+  register: incus_remote_list
+  changed_when: false
+  check_mode: no
+  ignore_errors: "{{ ansible_check_mode }}"
+  become: true
+  become_user: "{{ incus_trust_user }}"
+
+- name: planning to run - Add Incus remote
+  ansible.builtin.debug:
+    msg: |
+      incus remote add {{ incus_trust_remote_target | quote }} {{ incus_trust_remote_addr | quote }} \
+        --auth-type tls \
+        --accept-certificate
+  changed_when: ansible_check_mode
+  when: incus_trust_remote_target not in (incus_remote_list.stdout | from_json)
+- name: Add Incus remote
+  ansible.builtin.shell:
+    cmd: |
+      incus remote add {{ incus_trust_remote_target | quote }} {{ incus_trust_remote_addr | quote }} \
+        --auth-type tls \
+        --accept-certificate
+  args:
+    executable: /bin/bash
+  when: incus_trust_remote_target not in (incus_remote_list.stdout | from_json)
+  changed_when: not ansible_check_mode
+  become: true
+  become_user: "{{ incus_trust_user }}"
+
+
+
+# Set the default remote
+- name: List the default Incus remote
+  ansible.builtin.command:
+    cmd: incus remote get-default
+  register: incus_remote_default
+  changed_when: false
+  check_mode: no
+  ignore_errors: "{{ ansible_check_mode }}"
+  become: true
+  become_user: "{{ incus_trust_user }}"
+
+- name: planning to run - Set the default remote
+  ansible.builtin.debug:
+    msg: |
+      incus remote switch {{ incus_trust_remote_target | quote }}
+  changed_when: ansible_check_mode
+  when: incus_remote_default.stdout | trim != incus_trust_remote_target
+- name: Set the default remote
+  ansible.builtin.command:
+    cmd: |
+      incus remote switch {{ incus_trust_remote_target | quote }}
+  when: incus_remote_default.stdout | trim != incus_trust_remote_target
+  changed_when: not ansible_check_mode
+  become: true
+  become_user: "{{ incus_trust_user }}"
+  

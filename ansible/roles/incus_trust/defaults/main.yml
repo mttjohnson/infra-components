@@ -1,0 +1,30 @@
+---
+incus_release: stable # daily stable lts-6.0
+
+incus_setup_zabbly_gpg_key_url: https://pkgs.zabbly.com/key.asc
+incus_setup_zabbly_gpg_key_download_path: /root/zabbly.asc
+# curl -fsSL https://pkgs.zabbly.com/key.asc | sha256sum
+incus_setup_zabbly_gpg_key_checksum: sha256:f1adb44fdf82083f983a392b5b406d34e473dce3d66a51de3118cdc1f51d3f87
+# curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --import-options show-only --import
+incus_setup_zabbly_gpg_key_fingerprint: 4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+# pub   rsa3072 2023-08-23 [SC] [expires: 2030-08-17]
+#       4EFC590696CB15B87C73A3AD82CC8797C838DCFD
+# uid                      Zabbly Kernel Builds <info@zabbly.com>
+# sub   rsa3072 2023-08-23 [E] [expires: 2030-08-17]
+
+# The recommended locations for keyrings are /usr/share/keyrings for keyrings managed by
+# packages, and /etc/apt/keyrings for keyrings managed by the system operator.
+incus_setup_zabbly_gpg_key_install_path: /usr/share/keyrings/zabbly.gpg
+
+
+
+incus_trust_remote_target: local
+incus_trust_remote_addr: unix://
+incus_trust_user: unknown
+incus_trust_group: unknown
+incus_trust_name: "{{ incus_trust_user }}"
+incus_trust_description: ""
+
+incus_client_config_dir: "/home/{{ incus_trust_user }}/.config/incus"
+incus_client_cn: "{{ incus_trust_user }}@{{ ansible_facts['hostname'] }}"
+incus_client_o: Linux Containers
