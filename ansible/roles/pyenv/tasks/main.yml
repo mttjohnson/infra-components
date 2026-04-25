@@ -1,0 +1,175 @@
+---
+- name: Install build dependencies for CPython
+  ansible.builtin.apt:
+    name: "{{ pyenv_build_deps }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  when: pyenv_install_build_deps
+
+- name: Look up pyenv user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ pyenv_user }}"
+  register: pyenv_user_passwd
+
+- name: Set resolved pyenv paths
+  ansible.builtin.set_fact:
+    pyenv_user_home: "{{ pyenv_user_passwd.ansible_facts.getent_passwd[pyenv_user][4] }}"
+
+- name: Assert installer checksum is set
+  ansible.builtin.assert:
+    that:
+      - pyenv_installer_sha256 is defined
+      - pyenv_installer_sha256 | length == 64
+      - pyenv_installer_sha256 != "REPLACE_ME_WITH_ACTUAL_SHA256"
+    fail_msg: >-
+      pyenv_installer_sha256 must be set to the verified SHA256 of the installer.
+      Compute with: curl -fsSL {{ pyenv_installer_url }} | sha256sum
+
+- name: Create ansible role cache directory
+  ansible.builtin.file:
+    path: "{{ pyenv_cache_dir }}"
+    mode: 0755
+    state: directory
+  register: pyenv_setup_cache_dir
+
+- name: Download pyenv installer with checksum verification
+  ansible.builtin.get_url:
+    url: "{{ pyenv_installer_url }}"
+    dest: "{{ pyenv_installer_path }}"
+    checksum: "sha256:{{ pyenv_installer_sha256 }}"
+    mode: "0755"
+    force: false
+  ignore_errors: "{{ pyenv_setup_cache_dir.changed and ansible_check_mode }}"
+
+- name: Check whether pyenv is already installed
+  ansible.builtin.stat:
+    path: "{{ pyenv_root }}/bin/pyenv"
+  register: pyenv_bin
+
+- name: Ensure pyenv user's ansible tmp directory exists
+  ansible.builtin.file:
+    path: "/tmp/.ansible-{{ pyenv_user }}/tmp"
+    state: directory
+    owner: "{{ pyenv_user }}"
+    group: "{{ pyenv_group }}"
+    mode: "0700"
+
+- name: planning to run - Run pyenv installer
+  ansible.builtin.debug:
+    msg: |
+      {{ pyenv_installer_path }}
+  changed_when: ansible_check_mode
+  when: not pyenv_bin.stat.exists
+- name: Run pyenv installer
+  ansible.builtin.command: 
+    cmd: |
+      {{ pyenv_installer_path }}
+  environment:
+    PYENV_ROOT: "{{ pyenv_root }}"
+    HOME: "{{ pyenv_user_home }}"
+  become: true
+  become_user: "{{ pyenv_user }}"
+  vars:
+    ansible_remote_tmp: "/tmp/.ansible-{{ pyenv_user }}/tmp"
+  register: pyenv_install_result
+  when: not pyenv_bin.stat.exists
+  changed_when: not ansible_check_mode
+
+- name: planning to run - Run pyenv installer
+  ansible.builtin.debug:
+    msg: |
+      --- stdout
+      {{ pyenv_install_result.stdout }}
+      --- stderr
+      {{ pyenv_install_result.stderr }}
+  when: not pyenv_bin.stat.exists
+
+- name: Ensure pyenv shell init block in rc file
+  ansible.builtin.blockinfile:
+    path: "{{ pyenv_shell_rc }}"
+    create: true
+    owner: "{{ pyenv_user }}"
+    group: "{{ pyenv_group }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - pyenv"
+    block: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      [[ -d "$PYENV_ROOT/bin" ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init - bash)"
+  when: pyenv_shell_rc | length > 0
+
+- name: List currently installed pyenv Python versions
+  ansible.builtin.command: "{{ pyenv_root }}/bin/pyenv versions --bare"
+  environment:
+    PYENV_ROOT: "{{ pyenv_root }}"
+  become: true
+  become_user: "{{ pyenv_user }}"
+  register: pyenv_installed_versions
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ not pyenv_bin.stat.exists and ansible_check_mode }}"
+
+- name: Compute pyenv Python versions that need installing
+  ansible.builtin.set_fact:
+    pyenv_versions_to_install: >-
+      {{ pyenv_python_versions
+         | difference(pyenv_installed_versions.stdout_lines | default([])) }}
+
+- name: planning to run - Install requested Python versions
+  ansible.builtin.debug:
+    msg: |
+      {{ pyenv_root }}/bin/pyenv install {{ item }}
+  loop: "{{ pyenv_versions_to_install }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: ansible_check_mode
+- name: Install requested Python versions
+  ansible.builtin.command: 
+    cmd: |
+      {{ pyenv_root }}/bin/pyenv install {{ item }}
+  environment:
+    PYENV_ROOT: "{{ pyenv_root }}"
+  become: true
+  become_user: "{{ pyenv_user }}"
+  loop: "{{ pyenv_versions_to_install }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  ignore_errors: "{{ not pyenv_bin.stat.exists and ansible_check_mode }}"
+
+- name: Check whether pyenv version file exists
+  ansible.builtin.stat:
+    path: "{{ pyenv_root }}/version"
+  register: pyenv_version_file
+
+- name: Read current pyenv global version
+  ansible.builtin.slurp:
+    src: "{{ pyenv_root }}/version"
+  register: pyenv_current_global
+  when: pyenv_version_file.stat.exists
+
+- name: planning to run - Set pyenv global version
+  ansible.builtin.debug:
+    msg: |
+      {{ pyenv_root }}/bin/pyenv global {{ pyenv_global_version }}
+  changed_when: ansible_check_mode
+  when:
+    - pyenv_global_version | length > 0
+    - not pyenv_version_file.stat.exists or
+      (pyenv_current_global.content | b64decode | trim) != pyenv_global_version
+- name: Set pyenv global version
+  ansible.builtin.command: 
+    cmd: |
+      {{ pyenv_root }}/bin/pyenv global {{ pyenv_global_version }}
+  environment:
+    PYENV_ROOT: "{{ pyenv_root }}"
+  become: true
+  become_user: "{{ pyenv_user }}"
+  when:
+    - pyenv_global_version | length > 0
+    - not pyenv_version_file.stat.exists or
+      (pyenv_current_global.content | b64decode | trim) != pyenv_global_version
+  changed_when: true

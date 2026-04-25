@@ -1,0 +1,44 @@
+---
+# User to install pyenv for. Defaults to ansible_user_id (the connecting user).
+pyenv_user: "{{ ansible_user_id }}"
+pyenv_group: "{{ ansible_user_id }}"
+
+# Where pyenv lives. The installer respects PYENV_ROOT.
+pyenv_root: "{{ pyenv_user_home }}/.pyenv" # Resolved at runtime via getent. Override only if you have a non-standard layout.
+
+# Installer source — pinned to GitHub raw, not pyenv.run.
+pyenv_installer_url: "https://github.com/pyenv/pyenv-installer/raw/master/bin/pyenv-installer"
+
+# SHA256 of the installer. Bump this deliberately when you've reviewed a new version.
+# Compute with: curl -fsSL <url> | sha256sum
+pyenv_installer_sha256: "4b0adf623a6205727163eb98610b6c5e63f23b99183948b874d867cd9b30ef13"
+
+# Where to cache the installer on the target before executing.
+pyenv_cache_dir: /var/cache/ansible/pyenv
+pyenv_installer_path: "{{ pyenv_cache_dir }}/pyenv-installer-{{ pyenv_installer_sha256[:12] }}.sh"
+
+# Build-deps for compiling CPython on Ubuntu 24.04. Set false if managed elsewhere.
+pyenv_install_build_deps: true
+pyenv_build_deps:
+  - build-essential
+  - libssl-dev
+  - zlib1g-dev
+  - libbz2-dev
+  - libreadline-dev
+  - libsqlite3-dev
+  - libncursesw5-dev
+  - xz-utils
+  - tk-dev
+  - libxml2-dev
+  - libxmlsec1-dev
+  - libffi-dev
+  - liblzma-dev
+  - curl
+  - git
+
+# Shell rc file to inject pyenv init into. Set to "" to skip.
+pyenv_shell_rc: "{{ pyenv_user_home }}/.bashrc" # Resolved at runtime via getent. Override only if you have a non-standard layout.
+
+# Optional: Python versions to install and a global default.
+pyenv_python_versions: []   # e.g. ["3.12.7", "3.11.10"]
+pyenv_global_version: ""    # e.g. "3.12.7"
