@@ -1,0 +1,8 @@
+---
+# Map ansible_architecture to the suffix used in cosign .deb release artifacts.
+# Upstream publishes .deb files for amd64 and arm64 only.
+_cosign_arch_map:
+  x86_64: "amd64"
+  amd64: "amd64"
+  aarch64: "arm64"
+  arm64: "arm64"

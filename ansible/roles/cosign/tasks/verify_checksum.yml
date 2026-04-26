@@ -1,0 +1,47 @@
+---
+- name: Download cosign_checksums.txt
+  ansible.builtin.get_url:
+    url: "{{ _cosign_release_base }}/cosign_checksums.txt"
+    dest: "{{ cosign_cache_dir }}/cosign_checksums.txt"
+    mode: "0644"
+
+- name: Read checksums file
+  ansible.builtin.slurp:
+    src: "{{ cosign_cache_dir }}/cosign_checksums.txt"
+  register: _cosign_checksums_raw
+
+- name: Parse checksums file into lines
+  ansible.builtin.set_fact:
+    _cosign_checksum_lines: "{{ (_cosign_checksums_raw.content | b64decode).splitlines() }}"
+
+- name: Find checksum line for {{ _cosign_deb_name }}
+  ansible.builtin.set_fact:
+    _cosign_deb_checksum_line: "{{ _cosign_checksum_lines | select('search', '\\s' + _cosign_deb_name + '$') | list | first | default('') }}"
+
+- name: Extract SHA256 for {{ _cosign_deb_name }}
+  ansible.builtin.set_fact:
+    _cosign_expected_sha256: "{{ _cosign_deb_checksum_line.split() | first | default('') }}"
+
+- name: Assert checksum was found in checksums file
+  ansible.builtin.assert:
+    that:
+      - _cosign_expected_sha256 | length == 64
+    fail_msg: >-
+      Could not extract SHA256 for {{ _cosign_deb_name }} from
+      cosign_checksums.txt. Got: '{{ _cosign_expected_sha256 }}'.
+
+- name: Verify .deb SHA256 matches checksums file
+  ansible.builtin.stat:
+    path: "{{ _cosign_deb_path }}"
+    checksum_algorithm: sha256
+  register: _cosign_deb_stat
+
+- name: Assert .deb checksum matches
+  ansible.builtin.assert:
+    that:
+      - _cosign_deb_stat.stat.checksum == _cosign_expected_sha256
+    fail_msg: >-
+      SHA256 mismatch for {{ _cosign_deb_name }}.
+      Expected: {{ _cosign_expected_sha256 }}.
+      Got:      {{ _cosign_deb_stat.stat.checksum }}.
+    success_msg: "SHA256 verified for {{ _cosign_deb_name }}."

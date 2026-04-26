@@ -1,0 +1,6 @@
+---
+- name: Remove cosign package
+  ansible.builtin.apt:
+    name: cosign
+    state: absent
+    purge: true

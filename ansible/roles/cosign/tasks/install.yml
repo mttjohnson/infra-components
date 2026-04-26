@@ -1,0 +1,76 @@
+---
+- name: Set artifact facts
+  ansible.builtin.set_fact:
+    _cosign_deb_name: "cosign_{{ _cosign_effective_version }}_{{ _cosign_arch }}.deb"
+    _cosign_deb_path: "{{ cosign_cache_dir }}/cosign_{{ _cosign_effective_version }}_{{ _cosign_arch }}.deb"
+    _cosign_release_base: "{{ cosign_download_base_url }}/v{{ _cosign_effective_version }}"
+
+- name: Check installed cosign version
+  ansible.builtin.command: cosign version --json
+  register: _cosign_installed
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Determine if install/upgrade is needed
+  ansible.builtin.set_fact:
+    _cosign_needs_install: >-
+      {{
+        _cosign_installed.rc != 0
+        or (_cosign_installed.stdout | from_json).gitVersion | default('') | regex_replace('^v', '')
+           != _cosign_effective_version
+      }}
+
+- name: Install Info
+  ansible.builtin.debug:
+    msg: |
+      _cosign_effective_version: {{ _cosign_effective_version }}
+      _cosign_release_base: {{ _cosign_release_base }}
+      _cosign_needs_install: {{ _cosign_needs_install }}
+
+- name: Install/upgrade cosign
+  when: _cosign_needs_install
+  block:
+    - name: Create cache directory
+      ansible.builtin.file:
+        path: "{{ cosign_cache_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      register: _cosign_create_cache_dir
+
+    - name: Download cosign .deb package
+      ansible.builtin.get_url:
+        url: "{{ _cosign_release_base }}/{{ _cosign_deb_name }}"
+        dest: "{{ _cosign_deb_path }}"
+        mode: "0644"
+      ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+    - name: Verify .deb via signed sigstore bundle (bundle mode)
+      ansible.builtin.include_tasks: verify_bundle.yml
+      when: cosign_verify == "bundle"
+
+    - name: Verify .deb via SHA256 checksum (checksum_only mode)
+      ansible.builtin.include_tasks: verify_checksum.yml
+      when: cosign_verify == "checksum_only"
+
+    - name: Warn if verification is disabled
+      ansible.builtin.debug:
+        msg: >-
+          cosign_verify is set to 'none'; skipping integrity and authenticity
+          verification of {{ _cosign_deb_name }}. Not recommended.
+      when: cosign_verify == "none"
+
+    - name: Install cosign .deb package
+      ansible.builtin.apt:
+        deb: "{{ _cosign_deb_path }}"
+        state: present
+      ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+  always:
+    - name: Clean up cache directory
+      ansible.builtin.file:
+        path: "{{ cosign_cache_dir }}"
+        state: absent
+      when: _cosign_needs_install

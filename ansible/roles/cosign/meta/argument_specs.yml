@@ -1,0 +1,51 @@
+---
+argument_specs:
+  main:
+    short_description: Install and manage sigstore cosign on Debian/Ubuntu
+    options:
+      cosign_version:
+        type: str
+        default: "3.0.6"
+        description:
+          - Version of cosign to install.
+          - Set to C(latest) to query the GitHub API for the most recent release.
+      cosign_state:
+        type: str
+        default: present
+        choices:
+          - present
+          - absent
+        description: Desired installation state.
+      cosign_verify:
+        type: str
+        default: bundle
+        choices:
+          - bundle
+          - checksum_only
+          - none
+        description:
+          - Verification level applied to the downloaded .deb before install.
+          - C(bundle) bootstraps a verified cosign binary and uses it to verify
+            the .sigstore.json bundle (cert chain, transparency log, signed timestamp).
+          - C(checksum_only) verifies only the SHA256 from cosign_checksums.txt.
+          - C(none) skips verification entirely; not recommended.
+      cosign_cert_identity_regexp:
+        type: str
+        default: "^https://github\\.com/sigstore/cosign/\\.github/workflows/.*"
+        description: Regex the bundle signing certificate identity must match.
+      cosign_cert_oidc_issuer:
+        type: str
+        default: "https://token.actions.githubusercontent.com"
+        description: OIDC issuer of the signing identity.
+      cosign_cache_dir:
+        type: str
+        default: "/var/cache/ansible-cosign"
+        description: Where bootstrap downloads are staged. Cleaned up after install.
+      cosign_download_base_url:
+        type: str
+        default: "https://github.com/sigstore/cosign/releases/download"
+        description: Base URL for downloading release artifacts.
+      cosign_github_api_url:
+        type: str
+        default: "https://api.github.com/repos/sigstore/cosign/releases/latest"
+        description: GitHub API endpoint used when C(cosign_version=latest).

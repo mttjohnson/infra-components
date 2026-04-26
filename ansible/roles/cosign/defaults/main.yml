@@ -1,0 +1,30 @@
+---
+# Version of cosign to install. Set to "latest" to query the GitHub API.
+cosign_version: "3.0.6"
+
+# Desired state: "present" or "absent".
+cosign_state: "present"
+
+# Verification mode applied to the downloaded .deb before installation:
+#   bundle        - Bootstrap a verified cosign binary, then use cosign verify-blob
+#                   against the .sigstore.json bundle published with the release.
+#                   Strongest option (cert chain + transparency log + signed timestamp).
+#   checksum_only - Verify the .deb SHA256 against cosign_checksums.txt only.
+#                   Provides integrity but not authenticity.
+#   none          - No verification beyond TLS to GitHub. Not recommended.
+cosign_verify: "bundle"
+
+# Sigstore certificate identity regex the .deb bundle's signing certificate
+# must match. The default matches the upstream sigstore/cosign release
+# workflow regardless of file extension or branch/tag ref.
+cosign_cert_identity_regexp: "^https://github\\.com/sigstore/cosign/\\.github/workflows/.*"
+
+# OIDC issuer for the signing identity. GitHub Actions for upstream cosign.
+cosign_cert_oidc_issuer: "https://token.actions.githubusercontent.com"
+
+# Where bootstrap downloads are staged. Cleaned up after install.
+cosign_cache_dir: "/var/cache/ansible-cosign"
+
+# URL bases. Override for mirrors or air-gapped installs.
+cosign_download_base_url: "https://github.com/sigstore/cosign/releases/download"
+cosign_github_api_url: "https://api.github.com/repos/sigstore/cosign/releases/latest"

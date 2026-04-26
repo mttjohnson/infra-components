@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: cosign
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install and manage sigstore cosign on Debian/Ubuntu with signature verification
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - cosign
+    - sigstore
+    - signing
+    - security
+    - supplychain
+
+dependencies: []

@@ -1,0 +1,74 @@
+---
+- name: Set bootstrap facts
+  ansible.builtin.set_fact:
+    _cosign_bootstrap_name: "cosign-linux-{{ _cosign_arch }}"
+    _cosign_bootstrap_path: "{{ cosign_cache_dir }}/cosign-linux-{{ _cosign_arch }}"
+    _cosign_deb_bundle_name: "{{ _cosign_deb_name }}.sigstore.json"
+    _cosign_deb_bundle_path: "{{ _cosign_deb_path }}.sigstore.json"
+
+- name: Download cosign_checksums.txt
+  ansible.builtin.get_url:
+    url: "{{ _cosign_release_base }}/cosign_checksums.txt"
+    dest: "{{ cosign_cache_dir }}/cosign_checksums.txt"
+    mode: "0644"
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Read checksums file
+  ansible.builtin.slurp:
+    src: "{{ cosign_cache_dir }}/cosign_checksums.txt"
+  register: _cosign_checksums_raw
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Parse checksums file into lines
+  ansible.builtin.set_fact:
+    _cosign_checksum_lines: "{{ (_cosign_checksums_raw.content | b64decode).splitlines() }}"
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Find checksum line for {{ _cosign_bootstrap_name }}
+  ansible.builtin.set_fact:
+    _cosign_bootstrap_checksum_line: "{{ _cosign_checksum_lines | select('search', '\\s' + _cosign_bootstrap_name + '$') | list | first | default('') }}"
+
+- name: Extract SHA256 for bootstrap binary {{ _cosign_bootstrap_name }}
+  ansible.builtin.set_fact:
+    _cosign_bootstrap_sha256: "{{ _cosign_bootstrap_checksum_line.split() | first | default('') }}"
+
+- name: Assert bootstrap checksum was found
+  ansible.builtin.assert:
+    that:
+      - _cosign_bootstrap_sha256 | length == 64
+    fail_msg: >-
+      Could not extract SHA256 for {{ _cosign_bootstrap_name }} from
+      cosign_checksums.txt.
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Download bootstrap cosign binary with checksum verification
+  ansible.builtin.get_url:
+    url: "{{ _cosign_release_base }}/{{ _cosign_bootstrap_name }}"
+    dest: "{{ _cosign_bootstrap_path }}"
+    mode: "0755"
+    checksum: "sha256:{{ _cosign_bootstrap_sha256 }}"
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Download .deb sigstore bundle
+  ansible.builtin.get_url:
+    url: "{{ _cosign_release_base }}/{{ _cosign_deb_bundle_name }}"
+    dest: "{{ _cosign_deb_bundle_path }}"
+    mode: "0644"
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Verify .deb signature with bootstrap cosign (keyless, against bundle)
+  ansible.builtin.command:
+    argv:
+      - "{{ _cosign_bootstrap_path }}"
+      - "verify-blob"
+      - "--bundle"
+      - "{{ _cosign_deb_bundle_path }}"
+      - "--certificate-identity-regexp"
+      - "{{ cosign_cert_identity_regexp }}"
+      - "--certificate-oidc-issuer"
+      - "{{ cosign_cert_oidc_issuer }}"
+      - "{{ _cosign_deb_path }}"
+  register: _cosign_verify_result
+  ignore_errors: "{{ _cosign_create_cache_dir.changed and ansible_check_mode }}"
+  changed_when: false
+  # Fails the play if cosign exits non-zero, which is what we want.

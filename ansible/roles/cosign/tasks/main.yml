@@ -1,0 +1,44 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      cosign role supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+- name: Assert verification mode is valid
+  ansible.builtin.assert:
+    that:
+      - cosign_verify in ['bundle', 'checksum_only', 'none']
+    fail_msg: >-
+      cosign_verify must be one of: bundle, checksum_only, none.
+      Got: {{ cosign_verify }}.
+
+- name: Resolve target architecture
+  ansible.builtin.set_fact:
+    _cosign_arch: "{{ _cosign_arch_map[ansible_facts['architecture']] | default('') }}"
+
+- name: Assert architecture is supported
+  ansible.builtin.assert:
+    that:
+      - _cosign_arch | length > 0
+    fail_msg: >-
+      Unsupported architecture for cosign .deb: {{ ansible_facts['architecture'] }}.
+      Upstream publishes amd64 and arm64 .deb files only.
+
+- name: Resolve cosign version from GitHub API
+  ansible.builtin.include_tasks: resolve_version.yml
+  when: cosign_version == "latest"
+
+- name: Set effective cosign version
+  ansible.builtin.set_fact:
+    _cosign_effective_version: "{{ _cosign_resolved_version | default(cosign_version) }}"
+
+- name: Install cosign
+  ansible.builtin.include_tasks: install.yml
+  when: cosign_state == "present"
+
+- name: Remove cosign
+  ansible.builtin.include_tasks: remove.yml
+  when: cosign_state == "absent"
