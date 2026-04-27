@@ -1,0 +1,51 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      tenv role supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+- name: Assert verification mode is valid
+  ansible.builtin.assert:
+    that:
+      - tenv_verify in ['signature', 'checksum_only', 'none']
+    fail_msg: >-
+      tenv_verify must be one of: signature, checksum_only, none.
+      Got: {{ tenv_verify }}.
+
+- name: Resolve target architecture
+  ansible.builtin.set_fact:
+    _tenv_arch: "{{ _tenv_arch_map[ansible_facts['architecture']] | default('') }}"
+
+- name: Assert architecture is supported
+  ansible.builtin.assert:
+    that:
+      - _tenv_arch | length > 0
+    fail_msg: >-
+      Unsupported architecture for tenv .deb: {{ ansible_facts['architecture'] }}.
+      The role currently maps amd64/arm64 only; extend _tenv_arch_map if needed.
+
+- name: Resolve tenv version from GitHub API
+  ansible.builtin.include_tasks: resolve_version.yml
+  when: tenv_version == "latest"
+
+- name: Set effective tenv version
+  ansible.builtin.set_fact:
+    _tenv_effective_version: "{{ _tenv_resolved_version | default(tenv_version) }}"
+
+- name: Install tenv
+  ansible.builtin.include_tasks: install.yml
+  when: tenv_state == "present"
+
+- name: Configure per-user shell init
+  ansible.builtin.include_tasks: shell_init.yml
+  when:
+    - tenv_state == "present"
+    - tenv_setup_shell_init | bool
+    - tenv_user | length > 0
+
+- name: Remove tenv
+  ansible.builtin.include_tasks: remove.yml
+  when: tenv_state == "absent"

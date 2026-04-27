@@ -1,0 +1,27 @@
+---
+galaxy_info:
+  role_name: tenv
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install tenv (Terraform/OpenTofu/Terragrunt/Terramate version manager) on Debian/Ubuntu with cosign signature verification
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - tenv
+    - terraform
+    - opentofu
+    - terragrunt
+    - cosign
+    - sigstore
+    - versions
+
+dependencies: []

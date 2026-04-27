@@ -1,0 +1,51 @@
+---
+- name: Look up tenv user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ tenv_user }}"
+  register: _tenv_user_passwd
+
+- name: Resolve user home and per-user paths
+  ansible.builtin.set_fact:
+    _tenv_user_home: "{{ _tenv_user_passwd.ansible_facts.getent_passwd[tenv_user][4] }}"
+
+- name: Resolve effective per-user paths and TENV_ROOT
+  ansible.builtin.set_fact:
+    _tenv_effective_root: "{{ tenv_root if (tenv_root | length > 0) else (_tenv_user_home + '/.tenv') }}"
+    _tenv_effective_shell_rc: "{{ tenv_shell_rc if (tenv_shell_rc | length > 0) else (_tenv_user_home + '/.bashrc') }}"
+    _tenv_effective_completion_path: "{{ tenv_completion_path if (tenv_completion_path | length > 0) else (_tenv_user_home + '/.tenv.completion.bash') }}"
+
+- name: Check whether tenv binary is installed
+  ansible.builtin.stat:
+    path: /usr/bin/tenv
+  register: _tenv_binary_stat
+
+- name: Generate bash completion script
+  ansible.builtin.command:
+    cmd: tenv completion bash
+  register: _tenv_completion_out
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ not _tenv_binary_stat.stat.exists and ansible_check_mode }}"
+
+- name: Write bash completion script for {{ tenv_user }}
+  ansible.builtin.copy:
+    content: "{{ _tenv_completion_out.stdout | default('') }}\n"
+    dest: "{{ _tenv_effective_completion_path }}"
+    owner: "{{ tenv_user }}"
+    group: "{{ tenv_group }}"
+    mode: "0644"
+  ignore_errors: "{{ not _tenv_binary_stat.stat.exists and ansible_check_mode }}"
+
+- name: Ensure tenv shell init block in rc file
+  ansible.builtin.blockinfile:
+    path: "{{ _tenv_effective_shell_rc }}"
+    create: true
+    owner: "{{ tenv_user }}"
+    group: "{{ tenv_group }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - tenv"
+    block: |
+      export TENV_ROOT="{{ _tenv_effective_root }}"
+      [[ -d "$TENV_ROOT/bin" ]] && export PATH="$TENV_ROOT/bin:$PATH"
+      [[ -f "{{ _tenv_effective_completion_path }}" ]] && source "{{ _tenv_effective_completion_path }}"

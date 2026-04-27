@@ -1,0 +1,55 @@
+---
+- name: Set checksums file facts
+  ansible.builtin.set_fact:
+    _tenv_checksums_name: "tenv_v{{ _tenv_effective_version }}_checksums.txt"
+    _tenv_checksums_path: "{{ tenv_cache_dir }}/tenv_v{{ _tenv_effective_version }}_checksums.txt"
+
+- name: Download checksums file
+  ansible.builtin.get_url:
+    url: "{{ _tenv_release_base }}/{{ _tenv_checksums_name }}"
+    dest: "{{ _tenv_checksums_path }}"
+    mode: "0644"
+  ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Read checksums file
+  ansible.builtin.slurp:
+    src: "{{ _tenv_checksums_path }}"
+  register: _tenv_checksums_raw
+  ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Parse checksums file into lines
+  ansible.builtin.set_fact:
+    _tenv_checksum_lines: "{{ (_tenv_checksums_raw.content | b64decode).splitlines() }}"
+  ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Find checksum line for {{ _tenv_deb_name }}
+  ansible.builtin.set_fact:
+    _tenv_deb_checksum_line: "{{ _tenv_checksum_lines | select('search', '\\s' + _tenv_deb_name + '$') | list | first | default('') }}"
+
+- name: Extract SHA256 for {{ _tenv_deb_name }}
+  ansible.builtin.set_fact:
+    _tenv_expected_sha256: "{{ _tenv_deb_checksum_line.split() | first | default('') }}"
+
+- name: Assert checksum was found in checksums file
+  ansible.builtin.assert:
+    that:
+      - _tenv_expected_sha256 | length == 64
+    fail_msg: >-
+      Could not extract SHA256 for {{ _tenv_deb_name }} from
+      {{ _tenv_checksums_name }}. Got: '{{ _tenv_expected_sha256 }}'.
+
+- name: Compute SHA256 of downloaded .deb
+  ansible.builtin.stat:
+    path: "{{ _tenv_deb_path }}"
+    checksum_algorithm: sha256
+  register: _tenv_deb_stat
+
+- name: Assert .deb checksum matches
+  ansible.builtin.assert:
+    that:
+      - _tenv_deb_stat.stat.checksum == _tenv_expected_sha256
+    fail_msg: >-
+      SHA256 mismatch for {{ _tenv_deb_name }}.
+      Expected: {{ _tenv_expected_sha256 }}.
+      Got:      {{ _tenv_deb_stat.stat.checksum }}.
+    success_msg: "SHA256 verified for {{ _tenv_deb_name }}."

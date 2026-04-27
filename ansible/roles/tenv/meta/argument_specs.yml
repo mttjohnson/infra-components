@@ -1,0 +1,98 @@
+---
+argument_specs:
+  main:
+    short_description: Install tenv on Debian/Ubuntu with cosign signature verification
+    options:
+      tenv_version:
+        type: str
+        default: "4.11.1"
+        description:
+          - Version of tenv to install, without the C(v) prefix.
+          - Set to C(latest) to query the GitHub API for the most recent release.
+      tenv_state:
+        type: str
+        default: present
+        choices:
+          - present
+          - absent
+        description: Desired installation state of the tenv package.
+      tenv_verify:
+        type: str
+        default: signature
+        choices:
+          - signature
+          - checksum_only
+          - none
+        description:
+          - Verification level applied to the downloaded .deb before install.
+          - C(signature) uses cosign to verify the .deb's .sig/.pem against the
+            upstream GitHub Actions release workflow identity (cert chain,
+            transparency log, signed timestamp).
+          - C(checksum_only) verifies only the SHA256 from the published
+            checksums file.
+          - C(none) skips verification entirely; not recommended.
+      tenv_cosign_binary:
+        type: str
+        default: cosign
+        description:
+          - Path to the cosign binary used when C(tenv_verify=signature).
+          - Defaults to C(cosign) on PATH; install via the cosign role first.
+      tenv_cert_identity:
+        type: str
+        default: "https://github.com/tofuutils/tenv/.github/workflows/release.yml@refs/tags/v{version}"
+        description:
+          - Sigstore certificate identity the bundle's signing certificate
+            must match. Use C({version}) as a placeholder for the release
+            version (the role substitutes it at runtime).
+      tenv_cert_oidc_issuer:
+        type: str
+        default: "https://token.actions.githubusercontent.com"
+        description:
+          - OIDC issuer of the signing identity.
+          - GitHub Actions for upstream tenv releases.
+      tenv_cache_dir:
+        type: str
+        default: "/var/cache/ansible-tenv"
+        description: Where downloads are staged. Cleaned up after install.
+      tenv_download_base_url:
+        type: str
+        default: "https://github.com/tofuutils/tenv/releases/download"
+        description: Base URL for downloading release artifacts.
+      tenv_github_api_url:
+        type: str
+        default: "https://api.github.com/repos/tofuutils/tenv/releases/latest"
+        description: GitHub API endpoint used when C(tenv_version=latest).
+      tenv_setup_shell_init:
+        type: bool
+        default: true
+        description:
+          - Whether to write a per-user shell init block (TENV_ROOT, PATH,
+            bash completion) into the user's rc file.
+      tenv_user:
+        type: str
+        description:
+          - User to configure shell init for. Defaults to the connecting
+            user (C(ansible_user_id)).
+          - Set to an empty string with C(tenv_setup_shell_init=false) to
+            install only the system-wide binary with no per-user setup.
+      tenv_group:
+        type: str
+        description: Group ownership for the user-level files written by the role.
+      tenv_root:
+        type: str
+        default: ""
+        description:
+          - Value to set for C(TENV_ROOT) in the user's shell init.
+          - Empty string uses tenv's default (C(~/.tenv) for the configured user).
+      tenv_shell_rc:
+        type: str
+        default: ""
+        description:
+          - Path to the shell rc file the init block is written into.
+          - Empty string defaults to the user's C(~/.bashrc).
+      tenv_completion_path:
+        type: str
+        default: ""
+        description:
+          - Path the bash completion script is written to.
+          - Empty string defaults to the user's C(~/.tenv.completion.bash).

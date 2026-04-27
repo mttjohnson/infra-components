@@ -1,0 +1,9 @@
+---
+# Map ansible_architecture to the suffix used in tenv .deb release artifacts.
+# Upstream publishes 386, amd64, arm, and arm64 .deb files. We accept the
+# common Ubuntu-on-amd64/arm64 cases here; extend if you need 32-bit.
+_tenv_arch_map:
+  x86_64: "amd64"
+  amd64: "amd64"
+  aarch64: "arm64"
+  arm64: "arm64"

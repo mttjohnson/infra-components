@@ -1,0 +1,75 @@
+---
+- name: Set artifact facts
+  ansible.builtin.set_fact:
+    _tenv_deb_name: "tenv_v{{ _tenv_effective_version }}_{{ _tenv_arch }}.deb"
+    _tenv_deb_path: "{{ tenv_cache_dir }}/tenv_v{{ _tenv_effective_version }}_{{ _tenv_arch }}.deb"
+    _tenv_release_base: "{{ tenv_download_base_url }}/v{{ _tenv_effective_version }}"
+
+- name: Check installed tenv version
+  ansible.builtin.command: tenv version
+  register: _tenv_installed
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Determine if install/upgrade is needed
+  ansible.builtin.set_fact:
+    _tenv_needs_install: >-
+      {{
+        _tenv_installed.rc != 0
+        or ('v' + _tenv_effective_version) not in (_tenv_installed.stdout | default(''))
+      }}
+
+- name: Install info
+  ansible.builtin.debug:
+    msg: |
+      _tenv_effective_version: {{ _tenv_effective_version }}
+      _tenv_release_base: {{ _tenv_release_base }}
+      _tenv_needs_install: {{ _tenv_needs_install }}
+
+- name: Install/upgrade tenv
+  when: _tenv_needs_install
+  block:
+    - name: Create cache directory
+      ansible.builtin.file:
+        path: "{{ tenv_cache_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      register: _tenv_create_cache_dir
+
+    - name: Download tenv .deb package
+      ansible.builtin.get_url:
+        url: "{{ _tenv_release_base }}/{{ _tenv_deb_name }}"
+        dest: "{{ _tenv_deb_path }}"
+        mode: "0644"
+      ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+    - name: Verify .deb via cosign signature (signature mode)
+      ansible.builtin.include_tasks: verify_signature.yml
+      when: tenv_verify == "signature"
+
+    - name: Verify .deb via SHA256 checksum (checksum_only mode)
+      ansible.builtin.include_tasks: verify_checksum.yml
+      when: tenv_verify == "checksum_only"
+
+    - name: Warn if verification is disabled
+      ansible.builtin.debug:
+        msg: >-
+          tenv_verify is set to 'none'; skipping integrity and authenticity
+          verification of {{ _tenv_deb_name }}. Not recommended.
+      when: tenv_verify == "none"
+
+    - name: Install tenv .deb package
+      ansible.builtin.apt:
+        deb: "{{ _tenv_deb_path }}"
+        state: present
+      ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+  always:
+    - name: Clean up cache directory
+      ansible.builtin.file:
+        path: "{{ tenv_cache_dir }}"
+        state: absent
+      when: _tenv_needs_install

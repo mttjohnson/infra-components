@@ -1,0 +1,6 @@
+---
+- name: Remove tenv package
+  ansible.builtin.apt:
+    name: tenv
+    state: absent
+    purge: true

@@ -1,0 +1,58 @@
+---
+# Version of tenv to install (no "v" prefix; the role adds it when
+# constructing URLs and the certificate identity). Set to "latest" to
+# query the GitHub API.
+tenv_version: "4.11.1"
+
+# Desired state: "present" or "absent".
+tenv_state: "present"
+
+# Verification mode applied to the downloaded .deb before installation:
+#   signature      - Use cosign to verify the .deb's .sig/.pem against the
+#                    upstream GitHub Actions release workflow identity.
+#                    Strongest option; requires cosign on the target.
+#   checksum_only  - Verify the .deb SHA256 against tenv_<v>_checksums.txt
+#                    only. Provides integrity but not authenticity.
+#   none           - No verification beyond TLS to GitHub. Not recommended.
+tenv_verify: "signature"
+
+# Path to the cosign binary used for signature verification. Must already
+# exist on the target when tenv_verify == "signature". Install via the
+# cosign role first, or a system package.
+tenv_cosign_binary: "cosign"
+
+# Sigstore certificate identity the .deb's signing certificate must match.
+# tenv releases are signed by the project's GitHub Actions release workflow,
+# which means the identity is pinned to the release tag. The default uses
+# the {version} placeholder which the role substitutes at runtime.
+tenv_cert_identity: "https://github.com/tofuutils/tenv/.github/workflows/release.yml@refs/tags/v{version}"
+
+# OIDC issuer for the signing identity. GitHub Actions for upstream tenv.
+tenv_cert_oidc_issuer: "https://token.actions.githubusercontent.com"
+
+# Where downloads are staged. Cleaned up after install.
+tenv_cache_dir: "/var/cache/ansible-tenv"
+
+# URL bases. Override for mirrors or air-gapped installs.
+tenv_download_base_url: "https://github.com/tofuutils/tenv/releases/download"
+tenv_github_api_url: "https://api.github.com/repos/tofuutils/tenv/releases/latest"
+
+# Per-user shell init. The .deb installs the tenv binary system-wide;
+# this section sets up TENV_ROOT, PATH, and bash completion in the
+# specified user's shell rc file. Set tenv_setup_shell_init to false
+# (or tenv_user to "") to skip.
+tenv_setup_shell_init: true
+tenv_user: "{{ ansible_user_id }}"
+tenv_group: "{{ ansible_user_id }}"
+
+# TENV_ROOT for the user. Empty string = use tenv's default (~/.tenv,
+# resolved at runtime against the user's home directory).
+tenv_root: ""
+
+# Shell rc file to inject the tenv init block into. Empty string =
+# use the user's ~/.bashrc, resolved at runtime via getent.
+tenv_shell_rc: ""
+
+# Path to write the bash completion script. Empty string = use
+# ~/.tenv.completion.bash, resolved at runtime.
+tenv_completion_path: ""

@@ -1,0 +1,48 @@
+---
+- name: Set signature verification facts
+  ansible.builtin.set_fact:
+    _tenv_deb_sig_name: "{{ _tenv_deb_name }}.sig"
+    _tenv_deb_sig_path: "{{ _tenv_deb_path }}.sig"
+    _tenv_deb_pem_name: "{{ _tenv_deb_name }}.pem"
+    _tenv_deb_pem_path: "{{ _tenv_deb_path }}.pem"
+    _tenv_resolved_cert_identity: "{{ tenv_cert_identity | replace('{version}', _tenv_effective_version) }}"
+
+- name: Assert cosign binary is available
+  ansible.builtin.command: "{{ tenv_cosign_binary }} version"
+  register: _tenv_cosign_check
+  failed_when: _tenv_cosign_check.rc != 0
+  changed_when: false
+  check_mode: false
+
+- name: Download .deb signature
+  ansible.builtin.get_url:
+    url: "{{ _tenv_release_base }}/{{ _tenv_deb_sig_name }}"
+    dest: "{{ _tenv_deb_sig_path }}"
+    mode: "0644"
+  ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Download .deb signing certificate
+  ansible.builtin.get_url:
+    url: "{{ _tenv_release_base }}/{{ _tenv_deb_pem_name }}"
+    dest: "{{ _tenv_deb_pem_path }}"
+    mode: "0644"
+  ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+
+- name: Verify .deb signature with cosign (keyless, against .sig and .pem)
+  ansible.builtin.command:
+    argv:
+      - "{{ tenv_cosign_binary }}"
+      - "verify-blob"
+      - "--signature"
+      - "{{ _tenv_deb_sig_path }}"
+      - "--certificate"
+      - "{{ _tenv_deb_pem_path }}"
+      - "--certificate-identity"
+      - "{{ _tenv_resolved_cert_identity }}"
+      - "--certificate-oidc-issuer"
+      - "{{ tenv_cert_oidc_issuer }}"
+      - "{{ _tenv_deb_path }}"
+  register: _tenv_verify_result
+  ignore_errors: "{{ _tenv_create_cache_dir.changed and ansible_check_mode }}"
+  changed_when: false
+  # Fails the play if cosign exits non-zero, which is what we want.
