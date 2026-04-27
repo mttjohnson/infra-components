@@ -14,13 +14,18 @@ cosign_state: "present"
 #   none          - No verification beyond TLS to GitHub. Not recommended.
 cosign_verify: "bundle"
 
-# Sigstore certificate identity regex the .deb bundle's signing certificate
-# must match. The default matches the upstream sigstore/cosign release
-# workflow regardless of file extension or branch/tag ref.
-cosign_cert_identity_regexp: "^https://github\\.com/sigstore/cosign/\\.github/workflows/.*"
+# Sigstore certificate identity the .deb bundle's signing certificate must
+# match. Cosign releases are signed by the Sigstore project's GCP service
+# account (verified via Google OIDC), per the official Sigstore docs:
+# https://docs.sigstore.dev/cosign/system_config/installation/
+#
+# Provide either an exact identity OR a regex, but not both. If both are set,
+# cosign_cert_identity (exact) takes precedence.
+cosign_cert_identity: "keyless@projectsigstore.iam.gserviceaccount.com"
+cosign_cert_identity_regexp: ""
 
-# OIDC issuer for the signing identity. GitHub Actions for upstream cosign.
-cosign_cert_oidc_issuer: "https://token.actions.githubusercontent.com"
+# OIDC issuer for the signing identity. Google for upstream cosign releases.
+cosign_cert_oidc_issuer: "https://accounts.google.com"
 
 # Where bootstrap downloads are staged. Cleaned up after install.
 cosign_cache_dir: "/var/cache/ansible-cosign"

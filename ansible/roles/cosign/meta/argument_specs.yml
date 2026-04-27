@@ -29,14 +29,25 @@ argument_specs:
             the .sigstore.json bundle (cert chain, transparency log, signed timestamp).
           - C(checksum_only) verifies only the SHA256 from cosign_checksums.txt.
           - C(none) skips verification entirely; not recommended.
+      cosign_cert_identity:
+        type: str
+        default: "keyless@projectsigstore.iam.gserviceaccount.com"
+        description:
+          - Exact certificate identity the bundle's signing certificate must match.
+          - Cosign releases are signed by the Sigstore project's GCP service account.
+          - Takes precedence over C(cosign_cert_identity_regexp) when both are set.
       cosign_cert_identity_regexp:
         type: str
-        default: "^https://github\\.com/sigstore/cosign/\\.github/workflows/.*"
-        description: Regex the bundle signing certificate identity must match.
+        default: ""
+        description:
+          - Regex alternative to C(cosign_cert_identity).
+          - Only used when C(cosign_cert_identity) is empty.
       cosign_cert_oidc_issuer:
         type: str
-        default: "https://token.actions.githubusercontent.com"
-        description: OIDC issuer of the signing identity.
+        default: "https://accounts.google.com"
+        description:
+          - OIDC issuer of the signing identity.
+          - Google for upstream cosign releases (the GCP service account uses Google OIDC).
       cosign_cache_dir:
         type: str
         default: "/var/cache/ansible-cosign"

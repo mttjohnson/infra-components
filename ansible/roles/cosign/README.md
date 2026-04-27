@@ -5,7 +5,7 @@ Install and manage [sigstore cosign](https://github.com/sigstore/cosign) — cod
 https://docs.sigstore.dev/cosign/system_config/installation/
 
 ## Requirements
- 
+
 - Ansible 2.15+
 - Debian or Ubuntu target host
 - Architecture: `amd64` or `arm64` (the only architectures upstream publishes `.deb` files for)
@@ -16,7 +16,7 @@ https://docs.sigstore.dev/cosign/system_config/installation/
 Installing a verification tool without verifying it is the kind of bootstrapping irony that defeats the point. This role addresses that with a two-stage approach by default:
 
 1. Download the standalone `cosign-linux-${arch}` binary and verify its SHA256 against the published `cosign_checksums.txt`.
-2. Use that bootstrap binary to run `cosign verify-blob --bundle` against the `.deb`'s `.sigstore.json` sidecar, checking the certificate chain, transparency log inclusion, and signed timestamp — pinned to the upstream sigstore/cosign release workflow's OIDC identity.
+2. Use that bootstrap binary to run `cosign verify-blob --bundle` against the `.deb`'s `.sigstore.json` sidecar, checking the certificate chain, transparency log inclusion, and signed timestamp — pinned to the upstream cosign release signing identity (`keyless@projectsigstore.iam.gserviceaccount.com` via Google OIDC).
 3. Only after verification succeeds is the `.deb` installed.
 4. The cache directory and bootstrap binary are cleaned up afterward.
 
@@ -29,8 +29,9 @@ The bootstrap binary is trusted because its checksum is pinned. The `.deb` is tr
 | `cosign_version` | `"3.0.6"` | Version to install. Set to `"latest"` to query the GitHub API. |
 | `cosign_state` | `"present"` | `present` or `absent`. |
 | `cosign_verify` | `"bundle"` | `bundle`, `checksum_only`, or `none`. See verification levels below. |
-| `cosign_cert_identity_regexp` | `^https://github\.com/sigstore/cosign/\.github/workflows/.*` | Regex the signing cert identity must match. |
-| `cosign_cert_oidc_issuer` | `https://token.actions.githubusercontent.com` | Required OIDC issuer for the signing identity. |
+| `cosign_cert_identity` | `keyless@projectsigstore.iam.gserviceaccount.com` | Exact signing identity to match. Takes precedence over the regex form. |
+| `cosign_cert_identity_regexp` | `""` | Regex alternative; only used when `cosign_cert_identity` is empty. |
+| `cosign_cert_oidc_issuer` | `https://accounts.google.com` | Required OIDC issuer for the signing identity. |
 | `cosign_cache_dir` | `/var/cache/ansible-cosign` | Staging dir for downloads. Cleaned up after install. |
 | `cosign_download_base_url` | GitHub releases URL | Override for mirrors / air-gapped installs. |
 | `cosign_github_api_url` | GitHub API URL | Used only when `cosign_version: latest`. |
@@ -111,7 +112,7 @@ sudo dpkg -i cosign_${LATEST_VERSION}_amd64.deb
 ```
 
 ## Idempotency
- 
+
 The role calls `cosign version --json` first and short-circuits the entire download/verify/install path if the requested version is already installed. The cache dir is created and removed within a single converge.
 
 ## Notes on verifying cosign before installing
@@ -126,6 +127,5 @@ Parse the .sigstore.json, extract the cert and signature, validate the cert chai
 This may be a good TODO item to follow up with later
 
 ## License
- 
+
 MIT
- 

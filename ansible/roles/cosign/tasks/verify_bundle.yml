@@ -6,6 +6,19 @@
     _cosign_deb_bundle_name: "{{ _cosign_deb_name }}.sigstore.json"
     _cosign_deb_bundle_path: "{{ _cosign_deb_path }}.sigstore.json"
 
+- name: Assert exactly one certificate identity variable is set
+  ansible.builtin.assert:
+    that:
+      - (cosign_cert_identity | length > 0) or (cosign_cert_identity_regexp | length > 0)
+    fail_msg: >-
+      Either cosign_cert_identity (exact) or cosign_cert_identity_regexp
+      (regex) must be set when cosign_verify == 'bundle'.
+
+- name: Choose certificate identity flag (prefer exact identity over regex)
+  ansible.builtin.set_fact:
+    _cosign_identity_flag: "{{ '--certificate-identity' if cosign_cert_identity | length > 0 else '--certificate-identity-regexp' }}"
+    _cosign_identity_value: "{{ cosign_cert_identity if cosign_cert_identity | length > 0 else cosign_cert_identity_regexp }}"
+
 - name: Download cosign_checksums.txt
   ansible.builtin.get_url:
     url: "{{ _cosign_release_base }}/cosign_checksums.txt"
@@ -63,8 +76,8 @@
       - "verify-blob"
       - "--bundle"
       - "{{ _cosign_deb_bundle_path }}"
-      - "--certificate-identity-regexp"
-      - "{{ cosign_cert_identity_regexp }}"
+      - "{{ _cosign_identity_flag }}"
+      - "{{ _cosign_identity_value }}"
       - "--certificate-oidc-issuer"
       - "{{ cosign_cert_oidc_issuer }}"
       - "{{ _cosign_deb_path }}"
