@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: packer
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install HashiCorp Packer system-wide on Debian/Ubuntu via the upstream HashiCorp apt repository
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - packer
+    - hashicorp
+    - apt
+    - image
+    - build
+
+dependencies: []

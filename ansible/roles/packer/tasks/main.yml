@@ -1,0 +1,151 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      packer role supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+- name: Ensure prerequisites are installed
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Ensure keyrings directory exists
+  ansible.builtin.file:
+    path: "{{ packer_apt_keyring_path | dirname }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Download HashiCorp armored signing key
+  ansible.builtin.get_url:
+    url: "{{ packer_apt_key_url }}"
+    dest: "{{ packer_apt_key_download_path }}"
+    checksum: "{{ packer_apt_key_checksum }}"
+    mode: "0644"
+  become: true
+  register: _packer_key_download
+
+- name: Stat downloaded key file
+  ansible.builtin.stat:
+    path: "{{ packer_apt_key_download_path }}"
+  register: _packer_key_file_stat
+  become: true
+
+- name: Inspect downloaded HashiCorp signing key
+  ansible.builtin.command:
+    cmd: gpg --show-keys --with-colons --with-fingerprint {{ packer_apt_key_download_path }}
+  register: _packer_key_inspect
+  changed_when: false
+  check_mode: false
+  become: true
+  ignore_errors: "{{ ansible_check_mode and not _packer_key_file_stat.stat.exists }}"
+
+- name: Extract primary key fingerprint from downloaded key
+  ansible.builtin.set_fact:
+    _packer_key_observed_fpr: >-
+      {%- set lines = (_packer_key_inspect.stdout_lines | default([])) -%}
+      {%- set fpr_lines = lines | select('match', '^fpr:') | list -%}
+      {%- if fpr_lines -%}
+      {{- (fpr_lines[0].split(':'))[9] -}}
+      {%- else -%}
+      NOT_VERIFIED_YET
+      {%- endif -%}
+
+- name: planning to check - Assert HashiCorp signing key fingerprint matches expected
+  ansible.builtin.debug:
+    msg: |-
+      Would assert downloaded key fingerprint == {{ packer_apt_key_fingerprint }}
+      (downloaded key file not present in check mode; the assertion runs on the
+      real converge after the get_url download lands.)
+  changed_when: ansible_check_mode
+  when: ansible_check_mode and not _packer_key_file_stat.stat.exists
+
+- name: Assert HashiCorp signing key fingerprint matches expected
+  ansible.builtin.assert:
+    that:
+      - _packer_key_observed_fpr == packer_apt_key_fingerprint
+    fail_msg: >-
+      HashiCorp signing key fingerprint mismatch.
+      Expected: {{ packer_apt_key_fingerprint }}
+      Got:      {{ _packer_key_observed_fpr }}
+      The key at {{ packer_apt_key_url }} no longer matches the pinned
+      fingerprint. Do not blindly accept the new key. Verify the
+      currently-published fingerprint on HashiCorp's trust page
+      (https://www.hashicorp.com/trust/security) before updating
+      packer_apt_key_fingerprint and packer_apt_key_checksum in role
+      defaults or host vars.
+  when: _packer_key_file_stat.stat.exists
+
+- name: Stat installed keyring
+  ansible.builtin.stat:
+    path: "{{ packer_apt_keyring_path }}"
+  register: _packer_keyring_stat
+
+- name: planning to run - Install dearmored HashiCorp signing key into keyring
+  ansible.builtin.debug:
+    msg: |-
+      gpg --dearmor --batch --yes -o {{ packer_apt_keyring_path }} {{ packer_apt_key_download_path }}
+  changed_when: ansible_check_mode
+  when: _packer_key_download.changed or not _packer_keyring_stat.stat.exists
+
+- name: Install dearmored HashiCorp signing key into keyring
+  ansible.builtin.command:
+    cmd: gpg --dearmor --batch --yes -o {{ packer_apt_keyring_path }} {{ packer_apt_key_download_path }}
+  become: true
+  when: _packer_key_download.changed or not _packer_keyring_stat.stat.exists
+  ignore_errors: "{{ ansible_check_mode and not _packer_key_file_stat.stat.exists }}"
+
+- name: Get DPKG architecture
+  ansible.builtin.command:
+    cmd: dpkg --print-architecture
+  register: _packer_dpkg_arch
+  changed_when: false
+  check_mode: false
+
+- name: Add HashiCorp apt repository
+  ansible.builtin.deb822_repository:
+    name: hashicorp
+    types: deb
+    uris: "{{ packer_apt_repo_url }}"
+    suites: "{{ packer_apt_suite }}"
+    components: main
+    architectures: "{{ _packer_dpkg_arch.stdout }}"
+    signed_by: "{{ packer_apt_keyring_path }}"
+    state: present
+    enabled: true
+  become: true
+  register: _packer_repo
+  notify: Update apt cache
+
+- name: Ensure handlers are notified now
+  ansible.builtin.meta: flush_handlers
+
+- name: Install pinned Packer version via apt
+  ansible.builtin.apt:
+    name: "packer={{ packer_version }}-1"
+    state: present
+    allow_downgrade: true
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  when: packer_version != "latest"
+  ignore_errors: "{{ ansible_check_mode and _packer_repo.changed }}"
+
+- name: Install latest Packer via apt
+  ansible.builtin.apt:
+    name: packer
+    state: latest
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  when: packer_version == "latest"
+  ignore_errors: "{{ ansible_check_mode and _packer_repo.changed }}"

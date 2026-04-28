@@ -1,0 +1,60 @@
+---
+# Pinned Packer version installed from the HashiCorp apt repo. Bump and
+# re-run the role to upgrade across hosts in a dev/test/prod promotion
+# workflow. Provide as a bare semver (no "v", no "-1" apt-revision
+# suffix); the role appends "-1" when constructing the apt name spec.
+#
+# Set to "latest" to track whatever HashiCorp's apt repo lists as current
+# at run time — the role then uses apt's `state: latest`, which upgrades
+# automatically when a newer version is published and is a no-op when
+# already at the newest available version.
+#
+# Verify available versions with:
+#   curl -fsSL https://apt.releases.hashicorp.com/dists/{{ ansible_facts['distribution_release'] }}/main/binary-amd64/Packages \
+#     | awk '/^Package: packer$/,/^$/' | grep '^Version:'
+packer_version: "1.15.3"
+
+# URL for the HashiCorp apt signing key (ASCII-armored).
+packer_apt_key_url: https://apt.releases.hashicorp.com/gpg
+
+# Where to stage the downloaded ASCII-armored key on the target before
+# dearmoring it into the keyring location.
+packer_apt_key_download_path: /root/hashicorp.asc
+
+# SHA256 of the downloaded key. The role aborts if the fetched bytes
+# don't match. Recompute on rotation with:
+#   curl -fsSL https://apt.releases.hashicorp.com/gpg | sha256sum
+packer_apt_key_checksum: sha256:cafb01beac341bf2a9ba89793e6dd2468110291adfbb6c62ed11a0cde6c09029
+
+# Expected primary-key fingerprint. The role aborts if the downloaded
+# key's primary fingerprint doesn't match. The checksum above already
+# locks the bytes; this fingerprint pin is the operator-readable
+# identity gate — the part you compare against HashiCorp's published
+# trust page. If HashiCorp rotates the key, the failure message points
+# the operator at the trust page so the new key can be reviewed before
+# bumping these defaults.
+#
+# Verify HashiCorp's currently-published fingerprint:
+#   https://www.hashicorp.com/trust/security
+# Inspect a downloaded key locally with:
+#   curl -fsSL https://apt.releases.hashicorp.com/gpg \
+#     | gpg --import-options show-only --import
+# pub   rsa4096 2023-01-10 [SC] [expires: 2028-01-09]
+#       798AEC654E5C15428C8E42EEAA16FCBCA621E701
+# uid                      HashiCorp Security (HashiCorp Package Signing) <security+packaging@hashicorp.com>
+# sub   rsa4096 2023-01-10 [S] [expires: 2028-01-09]
+packer_apt_key_fingerprint: 798AEC654E5C15428C8E42EEAA16FCBCA621E701
+
+# Where the dearmored signing key is installed. Per Debian/Ubuntu
+# convention, /usr/share/keyrings is for keyrings explicitly referenced
+# from individual apt sources via `signed_by` — NOT trusted system-wide
+# (which is what /etc/apt/trusted.gpg.d/ would do). This keyring is
+# only used to verify packages from the HashiCorp repo added below.
+packer_apt_keyring_path: /usr/share/keyrings/hashicorp.gpg
+
+# Base URL for the HashiCorp apt repo. Override only for mirrors.
+packer_apt_repo_url: https://apt.releases.hashicorp.com
+
+# apt suite (release codename). Defaults to the target host's codename
+# (e.g. "noble", "jammy"). HashiCorp publishes per-codename pools.
+packer_apt_suite: "{{ ansible_facts['distribution_release'] }}"
