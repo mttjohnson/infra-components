@@ -3,5 +3,13 @@
 # the unprivileged user whose ~/.local/bin will be ensured on PATH and whose
 # ~/.local/share/pipx will hold per-user pipx state for any tools installed
 # by downstream roles (pipenv, gitman, etc.).
-pipx_user: "{{ ansible_user_id }}"
-pipx_group: "{{ ansible_user_id }}"
+pipx_user: "{{ ansible_facts['user_id'] }}"
+pipx_group: "{{ ansible_facts['user_id'] }}"
+
+# Pinned pipx version installed into the user's ~/.local/bin via the
+# apt-provided pipx. Ubuntu 24.04 (Noble) ships pipx 1.4.3 in apt, but
+# community.general.pipx (used by downstream roles like pipenv, gitman)
+# requires pipx >= 1.7.0. We bootstrap a newer pipx into user-local space
+# and point the downstream module calls at it. Verify on PyPI before
+# bumping: https://pypi.org/project/pipx/#history
+pipx_user_version: "1.11.1"

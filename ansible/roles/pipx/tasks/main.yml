@@ -7,7 +7,7 @@
       pipx role supports the Debian family only;
       detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
 
-- name: Install pipx via apt
+- name: Install pipx via apt (bootstrap)
   ansible.builtin.apt:
     name: pipx
     state: present
@@ -21,9 +21,39 @@
     key: "{{ pipx_user }}"
   become: true
 
-- name: Resolve pipx user home
+- name: Resolve pipx user home and user-local pipx path
   ansible.builtin.set_fact:
     pipx_user_home: "{{ ansible_facts['getent_passwd'][pipx_user][4] }}"
+    pipx_user_bin: "{{ ansible_facts['getent_passwd'][pipx_user][4] }}/.local/bin/pipx"
+
+- name: Stat user-local pipx binary
+  ansible.builtin.stat:
+    path: "{{ pipx_user_bin }}"
+  register: _pipx_user_bin_stat
+
+- name: Get installed user-local pipx version (if present)
+  ansible.builtin.command: "{{ pipx_user_bin }} --version"
+  register: _pipx_user_bin_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _pipx_user_bin_stat.stat.exists
+  become: true
+  become_user: "{{ pipx_user }}"
+  environment:
+    HOME: "{{ pipx_user_home }}"
+
+- name: Bootstrap a newer pipx into the user's ~/.local/bin
+  ansible.builtin.command:
+    cmd: /usr/bin/pipx install --force "pipx=={{ pipx_user_version }}"
+  become: true
+  become_user: "{{ pipx_user }}"
+  environment:
+    HOME: "{{ pipx_user_home }}"
+  when: >-
+    (not _pipx_user_bin_stat.stat.exists)
+    or ((_pipx_user_bin_version.stdout | default('0.0.0')) is version(pipx_user_version, '!='))
+  changed_when: true
 
 - name: Ensure ~/.local/bin is on PATH for pipx
   ansible.builtin.command: pipx ensurepath
