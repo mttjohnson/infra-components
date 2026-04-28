@@ -1,0 +1,11 @@
+---
+# Pinned Pipenv version installed via pipx. Bump and re-run the role to
+# upgrade Pipenv across the host's projects in lockstep with a dev/test/prod
+# promotion workflow. Verify the version exists on PyPI before pinning:
+#   https://pypi.org/project/pipenv/#history
+pipenv_version: "2026.6.0"
+
+# User to install Pipenv for via pipx. Should match pipx_user for the
+# pipx role that runs first.
+pipenv_user: "{{ ansible_facts['user_id'] }}"
+pipenv_group: "{{ ansible_facts['user_id'] }}"

@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: pipenv
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install Pipenv at a pinned version via pipx
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - pipenv
+    - python
+    - pipx
+    - virtualenv
+
+dependencies: []
+  # - role: mttjohnson.infra.pipx

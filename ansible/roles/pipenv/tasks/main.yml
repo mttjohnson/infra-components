@@ -1,0 +1,37 @@
+---
+- name: Look up pipenv user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ pipenv_user }}"
+  become: true
+
+- name: Resolve pipenv user paths
+  ansible.builtin.set_fact:
+    _pipenv_user_home: "{{ ansible_facts['getent_passwd'][pipenv_user][4] }}"
+    _pipenv_pipx_bin: "{{ ansible_facts['getent_passwd'][pipenv_user][4] }}/.local/bin/pipx"
+
+- name: Query currently installed pipx applications
+  ansible.builtin.command: "{{ _pipenv_pipx_bin }} list --short"
+  register: _pipenv_pipx_list
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ pipenv_user }}"
+  environment:
+    HOME: "{{ _pipenv_user_home }}"
+
+- name: Install or upgrade Pipenv to the pinned version via pipx
+  community.general.pipx:
+    name: pipenv
+    source: "pipenv=={{ pipenv_version }}"
+    state: install
+    force: true
+    executable: "{{ _pipenv_pipx_bin }}"
+  become: true
+  become_user: "{{ pipenv_user }}"
+  environment:
+    HOME: "{{ _pipenv_user_home }}"
+  when: >-
+    (_pipenv_pipx_list.stdout | default('')
+     | regex_search('^pipenv ' ~ (pipenv_version | regex_escape) ~ '$', multiline=True)) is none
