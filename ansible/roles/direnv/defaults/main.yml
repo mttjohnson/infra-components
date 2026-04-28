@@ -1,0 +1,26 @@
+---
+# User to install direnv shell integration for. apt installs the direnv
+# binary system-wide; this is the unprivileged user whose shell rc file
+# gets the direnv hook + PS1 helper, and whose ~/.config/direnv/direnv.toml
+# gets the quiet-logging settings.
+direnv_user: "{{ ansible_facts['user_id'] }}"
+direnv_group: "{{ ansible_facts['user_id'] }}"
+
+# Shell rc file to inject the direnv init block into. Empty string =
+# use the user's ~/.bashrc, resolved at runtime via getent.
+direnv_shell_rc: ""
+
+# When true, write ~/.config/direnv/direnv.toml with direnv_config_content.
+# Suppresses direnv's INFO-level output when entering a directory with an
+# .envrc; errors still surface. Set false to leave any existing direnv.toml
+# alone and manage it yourself.
+direnv_quiet_logging: true
+
+# Verbatim contents of ~/.config/direnv/direnv.toml when
+# direnv_quiet_logging is true. Override to enable hide_env_diff,
+# log_format, etc. Reference: https://direnv.net/man/direnv.toml.1.html
+direnv_config_content: |
+  [global]
+  # hide_env_diff = true
+  log_filter = "^$"
+  # log_format = "direnv: %s"

@@ -1,0 +1,75 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      direnv role supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+- name: Install direnv via apt
+  ansible.builtin.apt:
+    name: direnv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Look up direnv user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ direnv_user }}"
+  become: true
+
+- name: Resolve direnv user paths
+  ansible.builtin.set_fact:
+    _direnv_user_home: "{{ ansible_facts['getent_passwd'][direnv_user][4] }}"
+    _direnv_shell_rc_resolved: >-
+      {{ direnv_shell_rc if (direnv_shell_rc | length > 0)
+         else (ansible_facts['getent_passwd'][direnv_user][4] ~ '/.bashrc') }}
+    _direnv_config_dir: "{{ ansible_facts['getent_passwd'][direnv_user][4] }}/.config/direnv"
+
+- name: Ensure direnv shell init block in rc file
+  ansible.builtin.blockinfile:
+    path: "{{ _direnv_shell_rc_resolved }}"
+    create: true
+    owner: "{{ direnv_user }}"
+    group: "{{ direnv_group }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - direnv"
+    block: |
+      eval "$(direnv hook bash)"
+
+      # PS1 customization: inside a direnv-managed directory, prepend either
+      # CUSTOM_DIRENV_PS1_PREFIX (set explicitly by an .envrc) or the active
+      # virtualenv prompt (so projects that activate a venv via direnv get
+      # the usual "(venv) " marker without each .envrc setting it).
+      # https://github.com/direnv/direnv/wiki/Python#restoring-the-ps1
+      show_custom_ps1_prefix() {
+        if [[ -n "${CUSTOM_DIRENV_PS1_PREFIX-}" && -n "${DIRENV_DIR-}" ]]; then
+          echo "${CUSTOM_DIRENV_PS1_PREFIX-}"
+        fi
+        if [[ -n "${VIRTUAL_ENV_PROMPT-}" && -n "${DIRENV_DIR-}" ]]; then
+          echo "(${VIRTUAL_ENV_PROMPT-}) "
+        fi
+      }
+      PS1='$(show_custom_ps1_prefix)'$PS1
+
+- name: Ensure direnv config directory exists
+  ansible.builtin.file:
+    path: "{{ _direnv_config_dir }}"
+    state: directory
+    owner: "{{ direnv_user }}"
+    group: "{{ direnv_group }}"
+    mode: "0755"
+  when: direnv_quiet_logging | bool
+
+- name: Write direnv quiet-logging config
+  ansible.builtin.copy:
+    dest: "{{ _direnv_config_dir }}/direnv.toml"
+    owner: "{{ direnv_user }}"
+    group: "{{ direnv_group }}"
+    mode: "0644"
+    content: "{{ direnv_config_content }}"
+    backup: true
+  when: direnv_quiet_logging | bool

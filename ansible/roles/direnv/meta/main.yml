@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: direnv
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install direnv on Debian/Ubuntu via apt and configure the per-user bash shell hook
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - direnv
+    - shell
+    - bash
+    - environment
+    - dotfiles
+
+dependencies: []
