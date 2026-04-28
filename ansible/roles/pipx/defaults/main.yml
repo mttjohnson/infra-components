@@ -1,0 +1,7 @@
+---
+# User to install pipx for. apt installs the pipx CLI system-wide; this is
+# the unprivileged user whose ~/.local/bin will be ensured on PATH and whose
+# ~/.local/share/pipx will hold per-user pipx state for any tools installed
+# by downstream roles (pipenv, gitman, etc.).
+pipx_user: "{{ ansible_user_id }}"
+pipx_group: "{{ ansible_user_id }}"

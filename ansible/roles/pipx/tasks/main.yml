@@ -1,0 +1,35 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      pipx role supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+- name: Install pipx via apt
+  ansible.builtin.apt:
+    name: pipx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Look up pipx user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ pipx_user }}"
+  become: true
+
+- name: Resolve pipx user home
+  ansible.builtin.set_fact:
+    pipx_user_home: "{{ ansible_facts['getent_passwd'][pipx_user][4] }}"
+
+- name: Ensure ~/.local/bin is on PATH for pipx
+  ansible.builtin.command: pipx ensurepath
+  register: pipx_ensurepath_result
+  changed_when: false
+  become: true
+  become_user: "{{ pipx_user }}"
+  environment:
+    HOME: "{{ pipx_user_home }}"

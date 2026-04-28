@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: pipx
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install pipx (Python CLI installer) on Debian/Ubuntu via apt
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - pipx
+    - python
+    - cli
+
+dependencies: []
