@@ -1,0 +1,37 @@
+---
+- name: Look up gitman user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ gitman_user }}"
+  become: true
+
+- name: Resolve gitman user paths
+  ansible.builtin.set_fact:
+    _gitman_user_home: "{{ ansible_facts['getent_passwd'][gitman_user][4] }}"
+    _gitman_pipx_bin: "{{ ansible_facts['getent_passwd'][gitman_user][4] }}/.local/bin/pipx"
+
+- name: Query currently installed pipx applications
+  ansible.builtin.command: "{{ _gitman_pipx_bin }} list --short"
+  register: _gitman_pipx_list
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ gitman_user }}"
+  environment:
+    HOME: "{{ _gitman_user_home }}"
+
+- name: Install or upgrade gitman to the pinned version via pipx
+  community.general.pipx:
+    name: gitman
+    source: "gitman=={{ gitman_version }}"
+    state: install
+    force: true
+    executable: "{{ _gitman_pipx_bin }}"
+  become: true
+  become_user: "{{ gitman_user }}"
+  environment:
+    HOME: "{{ _gitman_user_home }}"
+  when: >-
+    (_gitman_pipx_list.stdout | default('')
+     | regex_search('^gitman ' ~ (gitman_version | regex_escape) ~ '$', multiline=True)) is none

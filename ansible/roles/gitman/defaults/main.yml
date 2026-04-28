@@ -1,0 +1,11 @@
+---
+# Pinned gitman version installed via pipx. Bump and re-run the role to
+# upgrade gitman across the host's projects in lockstep with a dev/test/prod
+# promotion workflow. Verify the version exists on PyPI before pinning:
+#   https://pypi.org/project/gitman/#history
+gitman_version: "3.5.2"
+
+# User to install gitman for via pipx. Should match pipx_user for the
+# pipx role that runs first.
+gitman_user: "{{ ansible_facts['user_id'] }}"
+gitman_group: "{{ ansible_facts['user_id'] }}"

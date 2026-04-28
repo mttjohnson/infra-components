@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: gitman
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install gitman (git-based dependency manager) at a pinned version via pipx
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - gitman
+    - python
+    - pipx
+    - git
+    - dependencies
+
+dependencies: []
+  # - role: mttjohnson.infra.pipx
