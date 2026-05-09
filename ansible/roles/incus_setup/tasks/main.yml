@@ -50,6 +50,14 @@
 
 
 # Incus - Install packages
+- name: Install dependencies for Incus
+  ansible.builtin.apt:
+    name: "{{ incus_setup_deps }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: incus_setup_install_deps
+
 - name: Install the Incus package
   ansible.builtin.apt:
     name:

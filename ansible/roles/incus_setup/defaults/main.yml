@@ -4,6 +4,10 @@ incus_release: stable # daily stable lts-6.0
 # ansible_distribution_release: jammy # focal jammy noble bullseye bookworm
 # echo "$(. /etc/os-release && echo ${VERSION_CODENAME})"
 
+# additional dependencies for installing Incus
+incus_setup_install_deps: false
+incus_setup_deps: []
+
 incus_ip_address: "{{ ansible_host }}"
 incus_https_port: 443
 
