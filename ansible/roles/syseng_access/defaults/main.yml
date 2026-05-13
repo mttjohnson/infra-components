@@ -1,8 +1,10 @@
 ---
 syseng_access_users: []
-# Set the syseng_access_users array when using this role to create and authorize a user
+# Set the syseng_access_users array when using this role to create and authorize a user.
+# Provide either pubkey (path to a public key file) or pubkey_content (key string directly):
 # syseng_access_users:
 #   - { username: my_user_name, pubkey: files/ssh-keys/my_user_name }
+#   - { username: other_user, pubkey_content: "ssh-ed25519 AAAA... user@host" }
 syseng_access_groups:
   - users
   - sysengadmins

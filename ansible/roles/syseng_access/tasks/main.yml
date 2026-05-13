@@ -18,7 +18,7 @@
 - name: import user ssh-keys
   ansible.posix.authorized_key:
     user: "{{ item.username }}"
-    key: "{{ lookup('file', '{{ item.pubkey }}') }}"
+    key: "{{ item.pubkey_content if item.pubkey_content is defined else lookup('file', item.pubkey) }}"
     exclusive: false
   with_items: "{{ syseng_access_users }}"
   ignore_errors: "{{ ansible_check_mode }}"
@@ -46,12 +46,12 @@
     dest: /etc/sudoers
     state: present
     regexp: '^#includedir \/etc\/sudoers.d'
-    line: '#includedir /etc/sudoers.d'
+    line: "#includedir /etc/sudoers.d"
   when: ansible_facts['os_family'] == 'RedHat'
 - name: configure sudoers include directory (Debian)
   ansible.builtin.lineinfile:
     dest: /etc/sudoers
     state: present
     regexp: '^@includedir \/etc\/sudoers.d'
-    line: '@includedir /etc/sudoers.d'
+    line: "@includedir /etc/sudoers.d"
   when: ansible_facts['os_family'] == 'Debian'
