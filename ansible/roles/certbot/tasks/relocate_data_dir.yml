@@ -1,0 +1,136 @@
+---
+# Relocates /etc/letsencrypt onto a separately attached volume.
+#
+# Handles three starting states for /etc/letsencrypt:
+#   - missing                 : create custom data dir, then symlink
+#   - existing symlink        : assert it already points at certbot_custom_data_dir
+#   - existing real directory : rsync contents to certbot_custom_data_dir,
+#                               remove the source, then symlink
+#
+# The parent of certbot_custom_data_dir (e.g. /data) is expected to already
+# exist and be mounted; this role will not create or mount it.
+
+- name: Assert certbot_custom_data_dir is a usable absolute path
+  ansible.builtin.assert:
+    that:
+      - certbot_custom_data_dir is string
+      - certbot_custom_data_dir | length > 0
+      - certbot_custom_data_dir.startswith('/')
+      - certbot_custom_data_dir != '/etc/letsencrypt'
+    fail_msg: >-
+      certbot_custom_data_dir must be an absolute path other than /etc/letsencrypt.
+      Got: {{ certbot_custom_data_dir | default('<unset>') }}
+
+- name: Stat parent of custom data dir
+  ansible.builtin.stat:
+    path: "{{ certbot_custom_data_dir | dirname }}"
+  register: _certbot_custom_data_parent_stat
+
+- name: Assert parent of custom data dir exists
+  ansible.builtin.assert:
+    that:
+      - _certbot_custom_data_parent_stat.stat.exists
+      - _certbot_custom_data_parent_stat.stat.isdir
+    fail_msg: >-
+      Parent directory {{ certbot_custom_data_dir | dirname }} does not exist
+      or is not a directory. Ensure the data volume is mounted before running
+      this role with certbot_relocate_data_dir enabled.
+
+- name: Stat /etc/letsencrypt
+  ansible.builtin.stat:
+    path: /etc/letsencrypt
+  register: _certbot_letsencrypt_stat
+
+- name: Stat custom data dir
+  ansible.builtin.stat:
+    path: "{{ certbot_custom_data_dir }}"
+  register: _certbot_custom_data_stat
+
+- name: Assert existing /etc/letsencrypt symlink points at the configured custom data dir
+  ansible.builtin.assert:
+    that:
+      - _certbot_letsencrypt_stat.stat.lnk_source == certbot_custom_data_dir
+    fail_msg: >-
+      /etc/letsencrypt is already a symlink to
+      {{ _certbot_letsencrypt_stat.stat.lnk_source }}, but certbot_custom_data_dir
+      is {{ certbot_custom_data_dir }}. Resolve manually before re-running.
+  when:
+    - _certbot_letsencrypt_stat.stat.exists
+    - _certbot_letsencrypt_stat.stat.islnk
+
+- name: Assert /etc/letsencrypt and custom data dir do not both already hold data
+  ansible.builtin.assert:
+    that:
+      - not (
+          _certbot_letsencrypt_stat.stat.exists
+          and _certbot_letsencrypt_stat.stat.isdir
+          and not _certbot_letsencrypt_stat.stat.islnk
+          and _certbot_custom_data_stat.stat.exists
+        )
+    fail_msg: >-
+      Cannot relocate: /etc/letsencrypt is a real directory and
+      {{ certbot_custom_data_dir }} already exists. Merge or remove one side
+      manually before re-running.
+
+- name: Ensure custom data dir exists
+  ansible.builtin.file:
+    path: "{{ certbot_custom_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+  # rsync (not copy) is required: /etc/letsencrypt/live/<domain>/*.pem are
+  # symlinks into /etc/letsencrypt/archive/, and certbot relies on those
+  # links to swap targets atomically on renewal. rsync -a preserves them;
+  # ansible.builtin.copy with remote_src does not reliably do so.
+  # Delegating to the inventory host runs rsync locally on the target
+  # between two local paths (no second SSH hop).
+- name: Install rsync (required by the sync task below)
+  ansible.builtin.package:
+    name: rsync
+    state: present
+  register: _certbot_install_rsync
+  when:
+    - _certbot_letsencrypt_stat.stat.exists
+    - _certbot_letsencrypt_stat.stat.isdir
+    - not _certbot_letsencrypt_stat.stat.islnk
+    - not _certbot_custom_data_stat.stat.exists
+
+- name: Sync existing /etc/letsencrypt contents into custom data dir
+  ansible.posix.synchronize:
+    src: /etc/letsencrypt/
+    dest: "{{ certbot_custom_data_dir }}/"
+    archive: true
+    delete: false
+  delegate_to: "{{ inventory_hostname }}"
+  when:
+    - _certbot_letsencrypt_stat.stat.exists
+    - _certbot_letsencrypt_stat.stat.isdir
+    - not _certbot_letsencrypt_stat.stat.islnk
+    - not _certbot_custom_data_stat.stat.exists
+  ignore_errors: "{{ ansible_check_mode and _certbot_install_rsync.changed }}"
+
+- name: Remove old /etc/letsencrypt directory after sync
+  ansible.builtin.file:
+    path: /etc/letsencrypt
+    state: absent
+  when:
+    - _certbot_letsencrypt_stat.stat.exists
+    - _certbot_letsencrypt_stat.stat.isdir
+    - not _certbot_letsencrypt_stat.stat.islnk
+    - not _certbot_custom_data_stat.stat.exists
+
+- name: Symlink /etc/letsencrypt to custom data dir
+  ansible.builtin.file:
+    src: "{{ certbot_custom_data_dir }}"
+    dest: /etc/letsencrypt
+    state: link
+    owner: root
+    group: root
+    follow: false
+  # In check mode the preceding sync and remove tasks are simulated, so
+  # /etc/letsencrypt may still appear as a real directory and the link
+  # task would fail. Allow the simulated failure so the rest of the play
+  # can be previewed.
+  ignore_errors: "{{ ansible_check_mode }}"

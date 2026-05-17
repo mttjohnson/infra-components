@@ -1,4 +1,8 @@
 ---
+- name: Relocate /etc/letsencrypt onto a separate data volume
+  ansible.builtin.include_tasks: relocate_data_dir.yml
+  when: certbot_relocate_data_dir | bool
+
 - name: Install snapd
   ansible.builtin.package:
     name: snapd
