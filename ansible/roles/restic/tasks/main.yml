@@ -68,21 +68,58 @@
     msg: "Would install restic {{ restic_version }}"
   when: (_restic_needs_install | bool) and ansible_check_mode
 
-- name: Fetch SHA256SUMS from GitHub
-  ansible.builtin.uri:
-    url: "{{ restic_checksums_url }}"
-    return_content: true
-  register: restic_checksums_response
-  check_mode: false
+# Establish provenance of the SHA256SUMS file before trusting any
+# checksum it contains. Inside verify_signature.yml the role downloads
+# the restic signing key (pinned by SHA256 + active-primary fingerprint),
+# imports it into a dedicated keyring, downloads SHA256SUMS plus its
+# .asc signature, and gpg --verify's the signature. Everything below
+# this point inherits that authentication.
+- name: Authenticate release SHA256SUMS via PGP signature
+  ansible.builtin.include_tasks: verify_signature.yml
+  when:
+    - _restic_needs_install | bool
+    - restic_verify_signature | bool
+
+- name: Handle disabled signature verification
+  when:
+    - _restic_needs_install | bool
+    - not (restic_verify_signature | bool)
+  block:
+    - name: Warn that restic SHA256SUMS signature verification is disabled
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: restic_verify_signature is false. The SHA256SUMS file used
+          to verify the binary archive will be trusted on TLS alone, with no
+          PGP authentication of the release maintainer. For a backup tool
+          installed as root, this weakens supply-chain provenance. Strongly
+          recommended to re-enable signature verification.
+
+    - name: Download SHA256SUMS (unverified)
+      ansible.builtin.get_url:
+        url: "{{ restic_checksums_url }}"
+        dest: "{{ restic_checksums_local_path }}"
+        force: true
+        owner: root
+        group: root
+        mode: "0644"
+      ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Read SHA256SUMS from disk
+  ansible.builtin.slurp:
+    src: "{{ restic_checksums_local_path }}"
+  register: _restic_sha256sums_slurp
   when: _restic_needs_install | bool
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Extract expected checksum for downloaded archive
   ansible.builtin.set_fact:
     restic_expected_checksum: >-
-      {{ restic_checksums_response.content
+      {{ (_restic_sha256sums_slurp.content | ansible.builtin.b64decode)
          | regex_search('^([0-9a-f]+)\s+' + (restic_download_dest | basename | regex_escape) + '\s*$', '\1', multiline=True)
          | first }}
-  when: _restic_needs_install | bool
+  when:
+    - _restic_needs_install | bool
+    - _restic_sha256sums_slurp.content is defined
 
 - name: Download restic binary archive with checksum
   ansible.builtin.get_url:

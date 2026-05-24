@@ -1,0 +1,175 @@
+---
+# Authenticate the release SHA256SUMS file with restic's PGP signing
+# key before trusting any checksum we extract from it.
+#
+# Trust chain established by this file:
+#   1. Download the restic signing key, pinned by SHA256 of the bytes
+#      (defense against MITM on the key URL).
+#   2. Walk the key's gpg --with-colons listing, skip revoked primary
+#      keys, and assert the active primary fingerprint matches the
+#      pinned restic_signing_key_fingerprint (operator-readable identity
+#      gate against restic's published trust info).
+#   3. Import the key into a dedicated GnuPG home so the trust scope is
+#      restic releases only, not anything else on the host.
+#   4. Download SHA256SUMS and SHA256SUMS.asc for the target release.
+#   5. gpg --verify the .asc against the SHA256SUMS file using that
+#      keyring; abort the play on any failure.
+# main.yml then extracts the expected per-file checksum from the
+# verified SHA256SUMS and hands it to get_url for the .bz2 download.
+
+- name: Ensure gnupg is installed
+  ansible.builtin.package:
+    name: gnupg
+    state: present
+
+- name: Create restic GnuPG home
+  ansible.builtin.file:
+    path: "{{ restic_gnupg_home }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Download restic signing key (pinned by SHA256)
+  ansible.builtin.get_url:
+    url: "{{ restic_signing_key_url }}"
+    dest: "{{ restic_signing_key_local_path }}"
+    checksum: "{{ restic_signing_key_checksum }}"
+    owner: root
+    group: root
+    mode: "0640"
+  register: _restic_key_download
+
+- name: Stat downloaded restic signing key
+  ansible.builtin.stat:
+    path: "{{ restic_signing_key_local_path }}"
+  register: _restic_key_file_stat
+
+- name: Inspect downloaded restic signing key
+  ansible.builtin.command:
+    cmd: gpg --show-keys --with-colons --with-fingerprint {{ restic_signing_key_local_path }}
+  register: _restic_key_inspect
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode and not _restic_key_file_stat.stat.exists }}"
+
+  # Walk pub/sub blocks: collect fpr lines only for non-revoked primary
+  # keys. The key file ships a legacy revoked primary alongside the
+  # current one, so a naive "first fpr wins" picks the wrong key.
+  # Round-trip through JSON so set_fact captures a real list, not a
+  # stringified list repr.
+- name: Extract non-revoked primary key fingerprints from downloaded key
+  ansible.builtin.set_fact:
+    _restic_key_primary_fprs: "{{ _restic_key_primary_fprs_json | from_json }}"
+  vars:
+    _restic_key_primary_fprs_json: |-
+      {%- set fprs = [] -%}
+      {%- set state = namespace(in_active_primary=false) -%}
+      {%- for line in (_restic_key_inspect.stdout_lines | default([])) -%}
+        {%- if line.startswith('pub:') -%}
+          {%- set state.in_active_primary = ((line.split(':'))[1] != 'r') -%}
+        {%- elif line.startswith('sub:') -%}
+          {%- set state.in_active_primary = false -%}
+        {%- elif line.startswith('fpr:') and state.in_active_primary -%}
+          {%- set _ = fprs.append((line.split(':'))[9]) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ fprs | to_json }}
+
+- name: Report fingerprint check (check mode without key)
+  ansible.builtin.debug:
+    msg: |-
+      Would assert restic signing key contains active primary fingerprint
+      {{ restic_signing_key_fingerprint | replace(' ', '') | upper }}.
+      Key file not present yet under --check; assertion runs on first real apply.
+  changed_when: ansible_check_mode
+  when: ansible_check_mode and not _restic_key_file_stat.stat.exists
+
+- name: Assert restic signing key contains expected active fingerprint
+  ansible.builtin.assert:
+    that:
+      - (restic_signing_key_fingerprint | replace(' ', '') | upper) in (_restic_key_primary_fprs | default([]))
+    fail_msg: >-
+      Restic signing key fingerprint mismatch.
+      Expected (active primary): {{ restic_signing_key_fingerprint | replace(' ', '') | upper }}
+      Got (non-revoked primaries in downloaded key): {{ _restic_key_primary_fprs | default([]) }}
+      The key at {{ restic_signing_key_url }} no longer contains the pinned
+      fingerprint among its active primary keys. Do not blindly accept the
+      new key — verify the currently published fingerprint on restic's
+      install docs (https://restic.readthedocs.io/en/stable/020_installation.html)
+      before bumping restic_signing_key_fingerprint and recomputing
+      restic_signing_key_checksum.
+  when: _restic_key_file_stat.stat.exists
+
+  # Re-importing is idempotent — gpg dedups by fingerprint. Marking
+  # changed_when: false avoids needless task churn in run reports.
+- name: Import restic signing key into dedicated keyring
+  ansible.builtin.command:
+    cmd: gpg --homedir {{ restic_gnupg_home }} --batch --yes --import {{ restic_signing_key_local_path }}
+  environment:
+    GNUPGHOME: "{{ restic_gnupg_home }}"
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode and not _restic_key_file_stat.stat.exists }}"
+
+  # Cross-check that the key actually landed in the keyring with the
+  # expected fingerprint. This catches edge cases where the import
+  # silently failed (corrupt key file, gpg version skew, etc).
+- name: Verify expected fingerprint is present in restic keyring
+  ansible.builtin.command:
+    cmd: gpg --homedir {{ restic_gnupg_home }} --list-keys --with-colons {{ restic_signing_key_fingerprint | replace(' ', '') }}
+  environment:
+    GNUPGHOME: "{{ restic_gnupg_home }}"
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode and not _restic_key_file_stat.stat.exists }}"
+
+# ----- Verify the per-release SHA256SUMS signature -----
+
+- name: Download SHA256SUMS for this restic release
+  ansible.builtin.get_url:
+    url: "{{ restic_checksums_url }}"
+    dest: "{{ restic_checksums_local_path }}"
+    force: true
+    mode: "0644"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Download SHA256SUMS.asc (PGP signature) for this restic release
+  ansible.builtin.get_url:
+    url: "{{ restic_checksums_sig_url }}"
+    dest: "{{ restic_checksums_sig_local_path }}"
+    force: true
+    mode: "0644"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Stat downloaded SHA256SUMS files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ restic_checksums_local_path }}"
+    - "{{ restic_checksums_sig_local_path }}"
+  register: _restic_checksums_files_stat
+
+- name: Verify SHA256SUMS PGP signature with restic keyring
+  ansible.builtin.command:
+    cmd: >-
+      gpg --homedir {{ restic_gnupg_home }}
+      --verify {{ restic_checksums_sig_local_path }}
+      {{ restic_checksums_local_path }}
+  environment:
+    GNUPGHOME: "{{ restic_gnupg_home }}"
+  register: _restic_sha256sums_verify
+  changed_when: false
+  check_mode: false
+  when: _restic_checksums_files_stat.results | map(attribute='stat.exists') | select | list | length == 2
+
+- name: Report SHA256SUMS signature verification (check mode, files not staged)
+  ansible.builtin.debug:
+    msg: |-
+      Would gpg --verify {{ restic_checksums_sig_local_path }} {{ restic_checksums_local_path }}
+      against the restic keyring at {{ restic_gnupg_home }}.
+      SHA256SUMS files not staged yet under --check; verification runs on first real apply.
+  changed_when: ansible_check_mode
+  when:
+    - ansible_check_mode
+    - (_restic_checksums_files_stat.results | map(attribute='stat.exists') | select | list | length) != 2

@@ -7,8 +7,10 @@ restic repository.
 ## Overview
 
 - Downloads the `restic` binary archive from [restic/restic](https://github.com/restic/restic)
-  releases, verifies the SHA256 checksum against the release's `SHA256SUMS` file,
-  decompresses the bzip2 archive, and installs it to `/usr/local/bin/restic`.
+  releases. The release's `SHA256SUMS` file is authenticated against restic's PGP signing
+  key (pinned by SHA256 and active-primary fingerprint) before any checksum from it is
+  trusted; the binary archive is then verified against the authenticated checksum,
+  decompressed, and installed to `/usr/local/bin/restic`.
 - Resolves `latest` from the GitHub API by default; pin via `restic_version`.
 - Generates a long random repository password on the remote host and stores it
   in `/etc/restic/password`. Optionally copies the password file back to the
@@ -97,6 +99,56 @@ Not wired up in cron mode (cron has no equivalent of `OnFailure=`).
 | `restic_config_dir` | `/etc/restic` | Directory for env file, password file, scripts |
 | `restic_log_dir` | `/var/log/restic` | Directory for cron-mode job logs |
 | `restic_force_reinstall` | `false` | Force re-download and reinstall even if the correct version is present |
+
+### Release signature verification
+
+The role establishes the following trust chain before installing the binary:
+
+1. Download the restic signing key from `restic_signing_key_url`, with the bytes
+   pinned by `restic_signing_key_checksum` (defense against MITM on the key URL).
+2. Walk the key's `gpg --with-colons` listing, skip revoked primaries, and assert
+   the active primary fingerprint matches `restic_signing_key_fingerprint`. This
+   is the operator-readable identity gate — compare against restic's published
+   trust info at https://restic.readthedocs.io/en/stable/020_installation.html
+3. Import the key into a dedicated GnuPG home (`restic_gnupg_home`, default
+   `/etc/restic/gnupg`) so the trust scope stays restic-only.
+4. Download `SHA256SUMS` and `SHA256SUMS.asc` for the target release, and run
+   `gpg --verify` against the dedicated keyring. Any failure aborts the play.
+5. Extract the per-file SHA256 from the now-authenticated `SHA256SUMS` and hand
+   it to `get_url` for the `.bz2` download.
+
+The key file at `restic_signing_key_url` currently bundles a legacy revoked
+primary (`7BC3013F8489FADC424A07B9141138DDA3E45D66`) alongside the active one
+(`CF8F18F2844575973F79D4E191A6868BD3F7A907`); the fingerprint check explicitly
+ignores revoked primaries.
+
+| Variable | Default | Description |
+|---|---|---|
+| `restic_verify_signature` | `true` | Authenticate the release SHA256SUMS via PGP. Strongly discouraged to disable on a backup tool. |
+| `restic_signing_key_url` | `https://restic.net/gpg-key-alex.asc` | URL serving the ASCII-armored signing key |
+| `restic_signing_key_checksum` | `sha256:e4f09134173fdd60ece4454d30e38459d172f3ea9a97b32a37324b4f0515a289` | SHA256 of the bytes at `restic_signing_key_url` |
+| `restic_signing_key_fingerprint` | `CF8F18F2844575973F79D4E191A6868BD3F7A907` | Expected active-primary fingerprint |
+| `restic_signing_key_local_path` | `/etc/restic/restic-signing-key.asc` | Where to stage the downloaded key on the target |
+| `restic_gnupg_home` | `/etc/restic/gnupg` | Dedicated GnuPG homedir for the restic keyring |
+
+Requires `gnupg` on the target host (installed by the role when signature
+verification is enabled).
+
+#### Rotating the pinned key
+
+When restic publishes a new signing key:
+
+1. Verify the new fingerprint on https://restic.readthedocs.io/en/stable/020_installation.html
+2. Recompute the byte checksum:
+   ```bash
+   curl -fsSL https://restic.net/gpg-key-alex.asc | sha256sum
+   ```
+3. Inspect the downloaded key to confirm the active primary fingerprint:
+   ```bash
+   curl -fsSL https://restic.net/gpg-key-alex.asc | gpg --show-keys --with-fingerprint
+   ```
+4. Update `restic_signing_key_checksum` and `restic_signing_key_fingerprint` in
+   the role defaults (or override in host/group vars) and re-run.
 
 ### Repository
 

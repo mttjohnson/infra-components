@@ -13,7 +13,61 @@ restic_archive_url: >-
   https://github.com/{{ restic_github_repo }}/releases/download/v{{ restic_version }}/restic_{{ restic_version }}_{{ ansible_facts['system'] | lower }}_{{ _restic_go_arch }}.bz2
 restic_checksums_url: >-
   https://github.com/{{ restic_github_repo }}/releases/download/v{{ restic_version }}/SHA256SUMS
+restic_checksums_sig_url: >-
+  https://github.com/{{ restic_github_repo }}/releases/download/v{{ restic_version }}/SHA256SUMS.asc
 restic_download_dest: "/tmp/restic_{{ restic_version }}_{{ ansible_facts['system'] | lower }}_{{ _restic_go_arch }}.bz2"
+restic_checksums_local_path: "/tmp/restic_{{ restic_version }}_SHA256SUMS"
+restic_checksums_sig_local_path: "/tmp/restic_{{ restic_version }}_SHA256SUMS.asc"
+
+# ----- Release signature verification -----
+# Restic signs the per-release SHA256SUMS file with the maintainer's
+# PGP key. Authenticating that signature is the strongest provenance
+# guarantee available short of reproducible builds. Disabling this is
+# strongly discouraged for a backup tool: if the installed binary is
+# tampered with, backups can be silently corrupted or exfiltrated and
+# the operator may not notice until a disaster recovery, at which
+# point the only known-good copy of the data is also gone.
+restic_verify_signature: true
+
+# URL serving the ASCII-armored signing key.
+restic_signing_key_url: https://restic.net/gpg-key-alex.asc
+
+# SHA256 of the bytes served at restic_signing_key_url. The role aborts
+# if the fetched key doesn't match. Recompute on rotation with:
+#   curl -fsSL https://restic.net/gpg-key-alex.asc | sha256sum
+restic_signing_key_checksum: sha256:e4f09134173fdd60ece4454d30e38459d172f3ea9a97b32a37324b4f0515a289
+
+# Expected primary-key fingerprint of restic's currently-active signing
+# key. Acts as the operator-readable identity gate — the part you
+# compare against the upstream trust source. The checksum above already
+# locks the bytes; this fingerprint pin is what makes the identity
+# auditable from the role defaults without having to re-fetch and
+# re-hash the key.
+#
+# Verify restic's currently-published fingerprint:
+#   https://restic.readthedocs.io/en/stable/020_installation.html
+# Inspect a downloaded key locally with:
+#   curl -fsSL https://restic.net/gpg-key-alex.asc \
+#     | gpg --show-keys --with-fingerprint
+#
+# pub   rsa4096 2014-11-01 [SCESC]
+#       CF8F 18F2 8445 7597 3F79  D4E1 91A6 868B D3F7 A907
+# uid                      Alexander Neumann <alexander@bumpern.de>
+#
+# The key file at restic_signing_key_url currently bundles a legacy
+# revoked primary (7BC3013F8489FADC424A07B9141138DDA3E45D66) alongside
+# the active one. The role explicitly ignores revoked primaries when
+# extracting fingerprints, and only the active fingerprint is asserted.
+restic_signing_key_fingerprint: "CF8F18F2844575973F79D4E191A6868BD3F7A907"
+
+# Where to stage the downloaded ASCII-armored key on the target.
+restic_signing_key_local_path: "{{ restic_config_dir }}/restic-signing-key.asc"
+
+# Dedicated GnuPG homedir used to verify SHA256SUMS signatures. Scope
+# is limited to restic releases; this is not shared with the system or
+# root's default keyring, so a compromise of restic's signing key
+# cannot vouch for unrelated software on the host.
+restic_gnupg_home: "{{ restic_config_dir }}/gnupg"
 
 # ----- Repository -----
 # Default to a local disk path; later swap for an NFS mount, S3 URL,
