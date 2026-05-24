@@ -1,0 +1,280 @@
+---
+# ----- Resolve version -----
+
+- name: Resolve latest restic version from GitHub API
+  when: restic_version == "latest"
+  block:
+    - name: Query GitHub API for latest release
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/{{ restic_github_repo }}/releases/latest
+        return_content: true
+        headers:
+          Accept: application/vnd.github.v3+json
+      register: restic_latest_release
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false
+
+    - name: Set restic_version from latest release tag
+      ansible.builtin.set_fact:
+        restic_version: "{{ (restic_latest_release.json.tag_name | replace('v', '')) }}"
+      run_once: true
+
+# ----- Validate scheduler choice early -----
+
+- name: Assert restic_scheduler is supported
+  ansible.builtin.assert:
+    that:
+      - restic_scheduler in ["systemd", "cron"]
+    fail_msg: >-
+      restic_scheduler must be "systemd" or "cron". Got: {{ restic_scheduler }}
+
+# ----- Install bzip2 (needed to decompress the release binary) -----
+
+- name: Install bzip2 (needed to decompress restic release binary)
+  ansible.builtin.package:
+    name: bzip2
+    state: present
+
+# ----- Check current installation -----
+
+- name: Check if restic binary exists
+  ansible.builtin.stat:
+    path: "{{ restic_binary_install_dir }}/restic"
+  register: _restic_binary_stat
+
+- name: Get installed restic version
+  ansible.builtin.command:
+    cmd: "{{ restic_binary_install_dir }}/restic version"
+  register: _restic_version_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _restic_binary_stat.stat.exists
+
+- name: Set restic installation required flag
+  ansible.builtin.set_fact:
+    _restic_needs_install: >-
+      {{ (restic_force_reinstall | bool)
+         or not (_restic_binary_stat.stat.exists | bool)
+         or ((_restic_version_raw | default({})).stdout | default('')
+             | regex_search('[0-9]+\.[0-9]+\.[0-9]+')) != restic_version }}
+
+# ----- Download, verify, and install binary -----
+
+- name: Report planned installation (check mode)
+  ansible.builtin.debug:
+    msg: "Would install restic {{ restic_version }}"
+  when: (_restic_needs_install | bool) and ansible_check_mode
+
+- name: Fetch SHA256SUMS from GitHub
+  ansible.builtin.uri:
+    url: "{{ restic_checksums_url }}"
+    return_content: true
+  register: restic_checksums_response
+  check_mode: false
+  when: _restic_needs_install | bool
+
+- name: Extract expected checksum for downloaded archive
+  ansible.builtin.set_fact:
+    restic_expected_checksum: >-
+      {{ restic_checksums_response.content
+         | regex_search('^([0-9a-f]+)\s+' + (restic_download_dest | basename | regex_escape) + '\s*$', '\1', multiline=True)
+         | first }}
+  when: _restic_needs_install | bool
+
+- name: Download restic binary archive with checksum
+  ansible.builtin.get_url:
+    url: "{{ restic_archive_url }}"
+    dest: "{{ restic_download_dest }}"
+    checksum: "sha256:{{ restic_expected_checksum }}"
+    mode: "0644"
+  when: _restic_needs_install | bool
+  ignore_errors: "{{ ansible_check_mode }}"
+
+  # The release artifact is a single bzip2-compressed binary (not a tar
+  # archive), so unarchive does not apply. --keep preserves the .bz2 for
+  # idempotent re-runs; --force overwrites a stale decompressed copy.
+- name: Decompress restic binary
+  ansible.builtin.command:
+    cmd: "bunzip2 --keep --force {{ restic_download_dest }}"
+  when: _restic_needs_install | bool
+  changed_when: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Install restic binary
+  ansible.builtin.copy:
+    src: "{{ restic_download_dest | regex_replace('\\.bz2$', '') }}"
+    dest: "{{ restic_binary_install_dir }}/restic"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: _restic_needs_install | bool
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# ----- Config directory & log directory -----
+
+- name: Create restic config directory
+  ansible.builtin.file:
+    path: "{{ restic_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create restic log directory
+  ansible.builtin.file:
+    path: "{{ restic_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# ----- Password file -----
+
+- name: Check if restic password file exists
+  ansible.builtin.stat:
+    path: "{{ restic_password_file }}"
+  register: _restic_password_file_stat
+
+- name: Generate new restic repository password
+  ansible.builtin.shell:
+    cmd: |
+      LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c {{ restic_password_length }}
+  no_log: true
+  register: _restic_password_gen
+  check_mode: false
+  changed_when: false
+  when: not _restic_password_file_stat.stat.exists
+
+- name: Write restic password file
+  ansible.builtin.copy:
+    content: "{{ _restic_password_gen.stdout }}\n"
+    dest: "{{ restic_password_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: not _restic_password_file_stat.stat.exists
+
+# ----- Optionally copy password file back to the control node -----
+
+- name: Save restic password file to control node
+  when: restic_fetch_password_to_control | bool
+  block:
+    - name: Ensure control-node password directory exists
+      ansible.builtin.file:
+        path: "{{ restic_control_password_dir }}"
+        state: directory
+        mode: "{{ restic_control_password_dir_mode }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fetch restic password file to control node
+      ansible.builtin.fetch:
+        src: "{{ restic_password_file }}"
+        dest: "{{ restic_control_password_dir }}/{{ inventory_hostname }}.password"
+        flat: true
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Tighten permissions on fetched password file
+      ansible.builtin.file:
+        path: "{{ restic_control_password_dir }}/{{ inventory_hostname }}.password"
+        mode: "{{ restic_control_password_file_mode }}"
+      delegate_to: localhost
+      become: false
+      ignore_errors: "{{ ansible_check_mode }}"
+
+# ----- Environment file (RESTIC_REPOSITORY + RESTIC_PASSWORD_FILE + backend creds) -----
+
+- name: Deploy restic environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ restic_config_dir }}/env"
+    owner: root
+    group: root
+    mode: "0600"
+
+# ----- Optional exclude file -----
+
+- name: Deploy restic exclude file
+  ansible.builtin.template:
+    src: excludes.j2
+    dest: "{{ restic_config_dir }}/excludes"
+    owner: root
+    group: root
+    mode: "0640"
+  when: restic_backup_excludes | length > 0
+
+# ----- Local repository directory & init -----
+
+- name: Manage local repository directory
+  when:
+    - restic_manage_local_repository_dir | bool
+    - restic_repository.startswith('/')
+  ansible.builtin.file:
+    path: "{{ restic_repository }}"
+    state: directory
+    owner: "{{ restic_local_repository_owner }}"
+    group: "{{ restic_local_repository_group }}"
+    mode: "{{ restic_local_repository_mode }}"
+
+# Re-stat the binary so the cat-config / init tasks below correctly
+# reflect post-install state on a fresh remote (in check mode the binary
+# is still absent, which the next tasks handle).
+- name: Re-check restic binary after install
+  ansible.builtin.stat:
+    path: "{{ restic_binary_install_dir }}/restic"
+  register: _restic_binary_post_install
+
+- name: Check if restic repository is already initialized
+  ansible.builtin.command:
+    cmd: "{{ restic_binary_install_dir }}/restic cat config"
+  environment: "{{ _restic_runtime_env }}"
+  register: _restic_cat_config
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _restic_binary_post_install.stat.exists
+
+- name: Initialize restic repository
+  ansible.builtin.command:
+    cmd: "{{ restic_binary_install_dir }}/restic init"
+  environment: "{{ _restic_runtime_env }}"
+  when:
+    - _restic_binary_post_install.stat.exists
+    - (_restic_cat_config | default({})).rc | default(1) != 0
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Report planned repository initialization (check mode, no binary yet)
+  ansible.builtin.debug:
+    msg: "Would initialize restic repository at {{ restic_repository }}"
+  when:
+    - ansible_check_mode
+    - not _restic_binary_post_install.stat.exists
+
+# ----- Deploy backup / forget / prune / check scripts -----
+
+- name: Deploy restic job scripts
+  ansible.builtin.template:
+    src: "{{ item.script }}.j2"
+    dest: "{{ restic_config_dir }}/{{ item.script }}"
+    owner: root
+    group: root
+    mode: "0750"
+  loop: "{{ _restic_jobs }}"
+  loop_control:
+    label: "{{ item.script }}"
+
+# ----- Hand off to the chosen scheduler -----
+
+- name: Configure systemd timers
+  ansible.builtin.include_tasks: schedule_systemd.yml
+  when: restic_scheduler == "systemd"
+
+- name: Configure cron jobs
+  ansible.builtin.include_tasks: schedule_cron.yml
+  when: restic_scheduler == "cron"

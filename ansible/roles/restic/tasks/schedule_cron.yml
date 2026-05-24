@@ -1,0 +1,42 @@
+---
+# Deploys /etc/cron.d/restic. Also disables and removes any restic
+# systemd timers left from a previous run with restic_scheduler ==
+# "systemd" so the two schedulers don't double-fire.
+
+- name: Stop and disable any existing restic systemd timers
+  ansible.builtin.systemd_service:
+    name: "restic-{{ item.name }}.timer"
+    enabled: false
+    state: stopped
+  loop: "{{ _restic_jobs }}"
+  loop_control:
+    label: "restic-{{ item.name }}.timer"
+  failed_when: false
+
+- name: Remove any existing restic systemd units
+  ansible.builtin.file:
+    path: "/etc/systemd/system/restic-{{ item.0.name }}.{{ item.1 }}"
+    state: absent
+  loop: "{{ _restic_jobs | product(['service', 'timer']) | list }}"
+  loop_control:
+    label: "restic-{{ item.0.name }}.{{ item.1 }}"
+  notify: Reload systemd
+
+- name: Remove restic failure handler service
+  ansible.builtin.file:
+    path: /etc/systemd/system/restic-backup-failure.service
+    state: absent
+  notify: Reload systemd
+
+- name: Ensure cron is installed
+  ansible.builtin.package:
+    name: "{{ restic_cron_package }}"
+    state: present
+
+- name: Deploy /etc/cron.d/restic
+  ansible.builtin.template:
+    src: restic.cron.j2
+    dest: /etc/cron.d/restic
+    owner: root
+    group: root
+    mode: "0644"

@@ -1,0 +1,11 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+
+set -a
+. {{ restic_config_dir }}/env
+set +a
+
+# Metadata-only check (fast). The companion restic-check-data job
+# additionally reads a subset of pack data to catch on-disk corruption.
+exec {{ restic_binary_install_dir }}/restic check {{ restic_check_extra_args | join(' ') }}

@@ -1,0 +1,45 @@
+---
+# Map ansible architecture facts to Go architecture names used by restic release filenames
+_restic_arch_map:
+  i386: "386"
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: arm
+  armv6l: arm
+
+_restic_go_arch: "{{ restic_go_arch | default(_restic_arch_map[ansible_facts['architecture']] | default(ansible_facts['architecture'])) }}"
+
+# Environment used when invoking restic from Ansible tasks (repo init,
+# config check). The same data is written to /etc/restic/env for use by
+# the scheduled job scripts.
+_restic_runtime_env: "{{ {'RESTIC_REPOSITORY': restic_repository, 'RESTIC_PASSWORD_FILE': restic_password_file} | combine(restic_env) }}"
+
+# The list of scheduled jobs deployed by the role. Each entry is rendered
+# as a {script, .service, .timer} triple by schedule_systemd.yml and as a
+# cron line by schedule_cron.yml.
+_restic_jobs:
+  - name: backup
+    description: "Restic backup"
+    script: restic-backup.sh
+    systemd_schedule: "{{ restic_backup_schedule }}"
+    cron: "{{ restic_backup_cron }}"
+  - name: forget
+    description: "Restic forget (apply retention policy)"
+    script: restic-forget.sh
+    systemd_schedule: "{{ restic_forget_schedule }}"
+    cron: "{{ restic_forget_cron }}"
+  - name: prune
+    description: "Restic prune (reclaim space)"
+    script: restic-prune.sh
+    systemd_schedule: "{{ restic_prune_schedule }}"
+    cron: "{{ restic_prune_cron }}"
+  - name: check
+    description: "Restic check (metadata)"
+    script: restic-check.sh
+    systemd_schedule: "{{ restic_check_schedule }}"
+    cron: "{{ restic_check_cron }}"
+  - name: check-data
+    description: "Restic check (read subset of pack data)"
+    script: restic-check-data.sh
+    systemd_schedule: "{{ restic_check_data_schedule }}"
+    cron: "{{ restic_check_data_cron }}"

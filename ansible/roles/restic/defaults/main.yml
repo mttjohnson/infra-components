@@ -1,0 +1,131 @@
+---
+# Restic role defaults
+
+# ----- Installation -----
+restic_version: "latest"
+restic_github_repo: "restic/restic"
+restic_binary_install_dir: "/usr/local/bin"
+restic_config_dir: "/etc/restic"
+restic_log_dir: "/var/log/restic"
+restic_force_reinstall: false
+
+restic_archive_url: >-
+  https://github.com/{{ restic_github_repo }}/releases/download/v{{ restic_version }}/restic_{{ restic_version }}_{{ ansible_facts['system'] | lower }}_{{ _restic_go_arch }}.bz2
+restic_checksums_url: >-
+  https://github.com/{{ restic_github_repo }}/releases/download/v{{ restic_version }}/SHA256SUMS
+restic_download_dest: "/tmp/restic_{{ restic_version }}_{{ ansible_facts['system'] | lower }}_{{ _restic_go_arch }}.bz2"
+
+# ----- Repository -----
+# Default to a local disk path; later swap for an NFS mount, S3 URL,
+# rclone remote, etc. Anything restic understands as a repository URL.
+restic_repository: "/data/backups"
+
+# Create the local repository directory (and run `restic init`) on the
+# remote host. Set false for repository types managed elsewhere (e.g. an
+# NFS mount you provision separately, an S3 bucket created in advance).
+restic_manage_local_repository_dir: true
+
+# Owner/mode of the local repository directory (only used when the
+# repository value is a local path and restic_manage_local_repository_dir
+# is true).
+restic_local_repository_owner: root
+restic_local_repository_group: root
+restic_local_repository_mode: "0700"
+
+# ----- Password -----
+# A repository password is generated on the remote host if the password
+# file does not already exist. The password is never regenerated once
+# created — losing it makes the backups unrecoverable.
+restic_password_file: "{{ restic_config_dir }}/password"
+restic_password_length: 64
+
+# Optionally fetch the generated password file back to the control node
+# so it lives somewhere other than the remote system being backed up.
+# Strongly recommended for disaster recovery.
+restic_fetch_password_to_control: false
+
+# Directory on the control node where fetched password files are stored.
+# Each host's password is written to
+# {{ restic_control_password_dir }}/{{ inventory_hostname }}.password
+# The directory is created on the control node if missing.
+restic_control_password_dir: "./restic_passwords"
+restic_control_password_dir_mode: "0700"
+restic_control_password_file_mode: "0600"
+
+# ----- Backend credentials / environment -----
+# Extra environment variables placed in /etc/restic/env. Use this for
+# backend credentials (AWS_ACCESS_KEY_ID, B2_ACCOUNT_ID, etc.) or for
+# overriding restic's behaviour (RESTIC_CACHE_DIR, etc.).
+# Example:
+#   restic_env:
+#     AWS_ACCESS_KEY_ID: "AKIA..."
+#     AWS_SECRET_ACCESS_KEY: "..."
+restic_env: {}
+
+# ----- Backup contents -----
+restic_backup_paths:
+  - /etc
+  - /home
+  - /root
+  - /var/log
+restic_backup_excludes: []
+restic_backup_exclude_files: []
+restic_backup_exclude_caches: true
+restic_backup_one_file_system: false
+restic_backup_tags:
+  - scheduled
+restic_backup_extra_args: []
+
+# ----- Retention policy -----
+# Defaults: daily for a week, weekly for a month, monthly for a year,
+# yearly for three years.
+restic_keep_daily: 7
+restic_keep_weekly: 4
+restic_keep_monthly: 12
+restic_keep_yearly: 3
+restic_forget_extra_args: []
+
+# ----- Check -----
+# Weekly check is metadata-only (fast). Monthly check reads a subset of
+# pack data to catch on-disk corruption.
+restic_check_extra_args: []
+restic_check_data_subset: "10%"
+restic_check_data_extra_args: []
+
+# ----- Scheduler -----
+# "systemd" (default) or "cron". Choosing systemd deploys a
+# .service+.timer pair for each job; choosing cron deploys a single
+# /etc/cron.d file with all jobs.
+restic_scheduler: "systemd"
+
+# ----- Systemd timer schedules -----
+# OnCalendar expressions, see systemd.time(7).
+restic_backup_schedule: "*-*-* 02:00:00"
+restic_forget_schedule: "*-*-* 03:30:00"
+restic_prune_schedule: "Sun *-*-* 04:00:00"
+restic_check_schedule: "Sat *-*-* 05:00:00"
+restic_check_data_schedule: "Sun *-*-01..07 06:00:00"
+
+# Persistent=true catches up missed runs after downtime.
+restic_persistent_timers: true
+
+# Spread jitter across hosts so backups don't all hit the backend at the
+# same wall-clock second. Set "" to disable.
+restic_randomized_delay: "30min"
+
+# ----- Cron schedules (used when restic_scheduler == "cron") -----
+restic_cron_user: root
+# Cron package name. Debian/Ubuntu use "cron"; RHEL-family use "cronie".
+restic_cron_package: cron
+restic_backup_cron: {minute: "0", hour: "2", day: "*", month: "*", weekday: "*"}
+restic_forget_cron: {minute: "30", hour: "3", day: "*", month: "*", weekday: "*"}
+restic_prune_cron: {minute: "0", hour: "4", day: "*", month: "*", weekday: "0"}
+restic_check_cron: {minute: "0", hour: "5", day: "*", month: "*", weekday: "6"}
+restic_check_data_cron: {minute: "0", hour: "6", day: "1-7", month: "*", weekday: "0"}
+
+# ----- Failure notification -----
+# Shell command run by the OnFailure= unit when a scheduled restic job
+# fails. Leave empty to skip deploying the failure handler. Example for
+# healthchecks.io:
+#   restic_failure_command: "curl -fsS --retry 3 https://hc-ping.com/<uuid>/fail"
+restic_failure_command: ""

@@ -1,0 +1,4 @@
+{{ ansible_managed | comment }}
+{% for pattern in restic_backup_excludes %}
+{{ pattern }}
+{% endfor %}

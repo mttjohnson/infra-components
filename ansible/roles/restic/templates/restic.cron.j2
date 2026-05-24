@@ -1,0 +1,9 @@
+{{ ansible_managed | comment }}
+# Restic scheduled jobs. Each line sources /etc/restic/env so the script
+# has RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE, and any backend creds.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+{% for job in _restic_jobs %}
+{{ job.cron.minute }} {{ job.cron.hour }} {{ job.cron.day }} {{ job.cron.month }} {{ job.cron.weekday }} {{ restic_cron_user }} {{ restic_config_dir }}/{{ job.script }} >> {{ restic_log_dir }}/{{ job.name }}.log 2>&1
+{% endfor %}

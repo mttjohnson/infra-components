@@ -1,0 +1,30 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+
+set -a
+. {{ restic_config_dir }}/env
+set +a
+
+args=()
+{% for tag in restic_backup_tags %}
+args+=( --tag {{ tag | quote }} )
+{% endfor %}
+{% if restic_backup_exclude_caches %}
+args+=( --exclude-caches )
+{% endif %}
+{% if restic_backup_one_file_system %}
+args+=( --one-file-system )
+{% endif %}
+{% if restic_backup_excludes | length > 0 %}
+args+=( --exclude-file {{ restic_config_dir }}/excludes )
+{% endif %}
+{% for f in restic_backup_exclude_files %}
+args+=( --exclude-file {{ f | quote }} )
+{% endfor %}
+{% for arg in restic_backup_extra_args %}
+args+=( {{ arg }} )
+{% endfor %}
+
+exec {{ restic_binary_install_dir }}/restic backup "${args[@]}" \
+  {{ restic_backup_paths | map('quote') | join(' ') }}

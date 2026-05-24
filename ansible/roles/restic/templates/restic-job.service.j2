@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description={{ item.description }}
+Wants=network-online.target
+After=network-online.target
+{% if restic_failure_command | length > 0 %}
+OnFailure=restic-backup-failure.service
+{% endif %}
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile={{ restic_config_dir }}/env
+ExecStart={{ restic_config_dir }}/{{ item.script }}
+Nice=19
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Hardening kept minimal: restic runs as root and needs broad read
+# access to whatever the operator chose to back up (including /home and
+# /root), so ProtectSystem/ProtectHome+ReadWritePaths enumeration is
+# fragile here. PrivateTmp and NoNewPrivileges are still safe wins.
+NoNewPrivileges=true
+PrivateTmp=true

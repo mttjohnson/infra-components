@@ -1,0 +1,14 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Timer for {{ item.description | lower }}
+
+[Timer]
+OnCalendar={{ item.systemd_schedule }}
+Persistent={{ 'true' if restic_persistent_timers else 'false' }}
+{% if restic_randomized_delay | length > 0 %}
+RandomizedDelaySec={{ restic_randomized_delay }}
+{% endif %}
+Unit=restic-{{ item.name }}.service
+
+[Install]
+WantedBy=timers.target

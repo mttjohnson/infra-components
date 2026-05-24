@@ -1,0 +1,9 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+
+set -a
+. {{ restic_config_dir }}/env
+set +a
+
+exec {{ restic_binary_install_dir }}/restic prune

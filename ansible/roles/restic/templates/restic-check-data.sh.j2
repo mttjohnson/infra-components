@@ -1,0 +1,12 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+
+set -a
+. {{ restic_config_dir }}/env
+set +a
+
+# Slower, IO-heavy check: reads a percentage of pack data and verifies
+# checksums, catching bit-rot the metadata-only check would miss.
+exec {{ restic_binary_install_dir }}/restic check \
+  --read-data-subset={{ restic_check_data_subset }} {{ restic_check_data_extra_args | join(' ') }}

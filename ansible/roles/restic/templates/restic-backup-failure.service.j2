@@ -1,0 +1,8 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Restic job failure handler
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ restic_config_dir }}/env
+ExecStart=/bin/bash -c {{ restic_failure_command | quote }}
