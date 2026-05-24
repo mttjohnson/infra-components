@@ -1,0 +1,13 @@
+---
+- name: Reinstall xterm-ghostty terminfo from staged .deb
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      dpkg-deb --fsys-tarfile {{ ghostty_terminfo_staging_dir | quote }}/{{ ghostty_terminfo_deb_filename | quote }}
+      | tar -xO ./usr/share/terminfo/x/xterm-ghostty
+      > {{ ghostty_terminfo_staging_dir | quote }}/xterm-ghostty.tmp
+      && install -m 0644 -o root -g root
+      {{ ghostty_terminfo_staging_dir | quote }}/xterm-ghostty.tmp
+      {{ ghostty_terminfo_compiled_path | quote }}
+    executable: /bin/bash
+  listen: "ghostty_terminfo deb refreshed"

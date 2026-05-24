@@ -1,0 +1,67 @@
+---
+argument_specs:
+  main:
+    short_description: Install the xterm-ghostty terminfo entry on Debian/Ubuntu
+    options:
+      ghostty_terminfo_source:
+        type: str
+        default: auto
+        choices:
+          - auto
+          - distro
+          - extract_from_deb
+        description:
+          - Where to source the terminfo entry from.
+          - C(auto) prefers distro packaging (ncurses-term), symlinks
+            C(x/xterm-ghostty) to C(../g/ghostty) when the distro provides only
+            the bare C(ghostty) name, and falls back to extracting from the
+            mkasberg/ghostty-ubuntu .deb when the distro provides neither.
+          - C(distro) restricts to ncurses-term and fails clearly if it does
+            not provide ghostty support.
+          - C(extract_from_deb) always extracts from the Ghostty .deb, even
+            when the distro already provides an entry.
+      ghostty_terminfo_deb_release:
+        type: str
+        default: "1.3.1-0-ppa2"
+        description:
+          - Release tag at github.com/mkasberg/ghostty-ubuntu to pull when
+            extracting from the .deb.
+          - Tag format C(<ghostty-version>-<deb-revision>-ppa<n>),
+            e.g. C(1.3.1-0-ppa2) wraps upstream Ghostty 1.3.1.
+      ghostty_terminfo_deb_variant:
+        type: str
+        default: "amd64_24.04"
+        description:
+          - Which .deb variant to fetch. The compiled C(xterm-ghostty) file
+            inside is byte-identical across all arch/ubuntu-version variants of
+            a given release, so this only affects which URL is downloaded;
+            the installed artifact is the same regardless of target host.
+      ghostty_terminfo_deb_filename:
+        type: str
+        description:
+          - Computed .deb filename. Default derives from C(ghostty_terminfo_deb_release)
+            and C(ghostty_terminfo_deb_variant). Override only if mirroring under
+            a different filename.
+      ghostty_terminfo_deb_url:
+        type: str
+        description:
+          - Full download URL for the .deb. Default points at GitHub releases.
+            Override for internal mirrors or air-gapped installs.
+      ghostty_terminfo_deb_checksum:
+        type: str
+        default: "sha256:478d440153ef544426418efc7d6d8901715359f452c46be29071901a94b8cd47"
+        description:
+          - SHA256 of the .deb at C(ghostty_terminfo_deb_url), in C(sha256:...)
+            form. Must be updated alongside C(ghostty_terminfo_deb_release).
+      ghostty_terminfo_staging_dir:
+        type: str
+        description:
+          - Versioned staging directory for the downloaded .deb. Cleaned up
+            after extraction completes. Default includes the release tag so
+            bumps trigger fresh downloads.
+      ghostty_terminfo_compiled_path:
+        type: str
+        default: "/usr/share/terminfo/x/xterm-ghostty"
+        description:
+          - Final install path of the compiled terminfo entry. Used for both
+            the first-run C(creates) check and the verification step.

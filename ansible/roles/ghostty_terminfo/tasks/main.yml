@@ -1,0 +1,139 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      ghostty_terminfo role supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+- name: Assert ghostty_terminfo_source is valid
+  ansible.builtin.assert:
+    that:
+      - ghostty_terminfo_source in ['auto', 'distro', 'extract_from_deb']
+    fail_msg: >-
+      ghostty_terminfo_source must be one of: auto, distro, extract_from_deb.
+      Got: {{ ghostty_terminfo_source }}.
+
+- name: Install ncurses packages
+  ansible.builtin.apt:
+    name:
+      - ncurses-base
+      - ncurses-bin
+      - ncurses-term
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Detect existing xterm-ghostty terminfo entry
+  ansible.builtin.command: infocmp xterm-ghostty
+  register: _ghostty_terminfo_xtg
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Detect existing ghostty terminfo entry (only consulted when xterm-ghostty is absent)
+  ansible.builtin.command: infocmp ghostty
+  register: _ghostty_terminfo_g
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: _ghostty_terminfo_xtg.rc != 0
+
+- name: Resolve install action
+  ansible.builtin.set_fact:
+    _ghostty_terminfo_action: >-
+      {%- if ghostty_terminfo_source == 'extract_from_deb' -%}
+      extract
+      {%- elif _ghostty_terminfo_xtg.rc == 0 -%}
+      none
+      {%- elif (_ghostty_terminfo_g.rc | default(1)) == 0 -%}
+      symlink
+      {%- elif ghostty_terminfo_source == 'distro' -%}
+      fail
+      {%- else -%}
+      extract
+      {%- endif -%}
+
+- name: Show resolved action
+  ansible.builtin.debug:
+    msg: >-
+      ghostty_terminfo_source={{ ghostty_terminfo_source }};
+      xterm-ghostty present={{ _ghostty_terminfo_xtg.rc == 0 }};
+      ghostty present={{ (_ghostty_terminfo_g.rc | default(1)) == 0 }};
+      action={{ _ghostty_terminfo_action }}.
+
+- name: Fail when distro mode has no ghostty terminfo available
+  ansible.builtin.fail:
+    msg: >-
+      ghostty_terminfo_source=distro, but neither xterm-ghostty nor ghostty
+      is provided by ncurses-term on
+      {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}.
+      Upgrade to an Ubuntu release whose ncurses-term ships the entry
+      (ncurses 6.5-20241228 or newer), or set ghostty_terminfo_source to
+      'auto' (recommended) or 'extract_from_deb' to install from the
+      upstream Ghostty .deb.
+  when: _ghostty_terminfo_action == 'fail'
+
+- name: Symlink x/xterm-ghostty to distro-provided g/ghostty
+  ansible.builtin.file:
+    src: "../g/ghostty"
+    dest: "{{ ghostty_terminfo_compiled_path }}"
+    state: link
+    force: true
+  when: _ghostty_terminfo_action == 'symlink'
+
+- name: Install xterm-ghostty from Ghostty .deb
+  when: _ghostty_terminfo_action == 'extract'
+  block:
+    - name: Create staging directory
+      ansible.builtin.file:
+        path: "{{ ghostty_terminfo_staging_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      register: _ghostty_terminfo_staging_created
+
+    - name: Download Ghostty .deb
+      ansible.builtin.get_url:
+        url: "{{ ghostty_terminfo_deb_url }}"
+        dest: "{{ ghostty_terminfo_staging_dir }}/{{ ghostty_terminfo_deb_filename }}"
+        checksum: "{{ ghostty_terminfo_deb_checksum }}"
+        mode: "0644"
+        owner: root
+        group: root
+      notify: "ghostty_terminfo deb refreshed"
+      ignore_errors: "{{ _ghostty_terminfo_staging_created.changed and ansible_check_mode }}"
+
+    - name: Extract xterm-ghostty from staged .deb (first run)
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail &&
+          dpkg-deb --fsys-tarfile {{ ghostty_terminfo_staging_dir | quote }}/{{ ghostty_terminfo_deb_filename | quote }}
+          | tar -xO ./usr/share/terminfo/x/xterm-ghostty
+          > {{ ghostty_terminfo_staging_dir | quote }}/xterm-ghostty.tmp
+          && install -m 0644 -o root -g root
+          {{ ghostty_terminfo_staging_dir | quote }}/xterm-ghostty.tmp
+          {{ ghostty_terminfo_compiled_path | quote }}
+      args:
+        creates: "{{ ghostty_terminfo_compiled_path }}"
+        executable: /bin/bash
+      ignore_errors: "{{ _ghostty_terminfo_staging_created.changed and ansible_check_mode }}"
+
+- name: Flush handlers so re-extraction completes before staging cleanup and verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Clean up staging directory
+  ansible.builtin.file:
+    path: "{{ ghostty_terminfo_staging_dir }}"
+    state: absent
+  when: _ghostty_terminfo_action == 'extract'
+
+- name: Verify xterm-ghostty terminfo is queryable
+  ansible.builtin.command: infocmp xterm-ghostty
+  register: _ghostty_terminfo_verify
+  changed_when: false
+  check_mode: false
+  failed_when: _ghostty_terminfo_verify.rc != 0
+  ignore_errors: "{{ ansible_check_mode }}"

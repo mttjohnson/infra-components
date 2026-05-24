@@ -1,0 +1,22 @@
+---
+galaxy_info:
+  role_name: ghostty_terminfo
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install the xterm-ghostty terminfo entry system-wide on Debian/Ubuntu
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+        - resolute
+  galaxy_tags:
+    - ghostty
+    - terminfo
+    - ncurses
+    - terminal
+    - ssh
+
+dependencies: []
