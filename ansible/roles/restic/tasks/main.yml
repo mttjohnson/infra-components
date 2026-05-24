@@ -315,3 +315,14 @@
 - name: Configure cron jobs
   ansible.builtin.include_tasks: schedule_cron.yml
   when: restic_scheduler == "cron"
+
+# ----- Operator runbook -----
+
+- name: Deploy operator runbook to {{ restic_backups_md_path }}
+  ansible.builtin.template:
+    src: BACKUPS.md.j2
+    dest: "{{ restic_backups_md_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: restic_deploy_backups_md | bool

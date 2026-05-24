@@ -264,6 +264,39 @@ schedules above. See `defaults/main.yml`.
   - systemd: `restic-{backup,forget,prune,check,check-data}.{service,timer}` in `/etc/systemd/system/`
   - cron: `/etc/cron.d/restic`
 
+## Operator runbook (BACKUPS.md)
+
+The role renders a host-tailored quick reference into `/root/BACKUPS.md`
+(path configurable via `restic_backups_md_path`, deployment toggled by
+`restic_deploy_backups_md`, default `true`). It is refreshed on every
+apply so it never drifts from the live configuration.
+
+The runbook covers the operations an operator actually needs in the
+moment — with the host's real repository URL, paths, schedules, and
+retention numbers baked in instead of placeholder examples:
+
+- Sourcing `/etc/restic/env` so plain `restic` commands work
+- Listing scheduled timers / cron entries and tailing recent logs
+- Triggering an ad-hoc backup
+- Inspecting snapshots (`snapshots`, `ls`, `find`, `diff`, `stats`)
+- Verifying integrity (`check`, `check --read-data-subset`)
+- **Restoring** — always starting with `restic restore ... --dry-run --verbose=2`
+  for a preview, then a sandboxed restore to a fresh directory, with
+  recipes for single-file restores, streaming `dump`, and fuse mount
+- A one-shot end-to-end test-restore recipe so operators can routinely
+  prove the backups actually work, not just that they ran
+- Previewing the retention policy (`restic forget --dry-run`) before
+  the scheduled forget job deletes anything
+- Troubleshooting stale locks and lost-password recovery
+- A "where things live" path reference for the host
+
+Authoritative restic documentation: https://restic.readthedocs.io/
+
+| Variable | Default | Description |
+|---|---|---|
+| `restic_deploy_backups_md` | `true` | Render BACKUPS.md to root's home |
+| `restic_backups_md_path` | `/root/BACKUPS.md` | Where to place the runbook (mode 0600 root) |
+
 ## Check mode
 
 The role is designed to run cleanly under `--check`:

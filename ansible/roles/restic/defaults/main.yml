@@ -177,6 +177,15 @@ restic_prune_cron: {minute: "0", hour: "4", day: "*", month: "*", weekday: "0"}
 restic_check_cron: {minute: "0", hour: "5", day: "*", month: "*", weekday: "6"}
 restic_check_data_cron: {minute: "0", hour: "6", day: "1-7", month: "*", weekday: "0"}
 
+# ----- Operator runbook -----
+# Render a host-tailored BACKUPS.md quick-reference into root's home so
+# an operator who needs to verify or restore backups under stress has a
+# single page to reach for, with the actual paths, schedules, and
+# retention numbers for THIS host baked in. The role refreshes the file
+# on every apply so it never drifts from the live configuration.
+restic_deploy_backups_md: true
+restic_backups_md_path: /root/BACKUPS.md
+
 # ----- Failure notification -----
 # Shell command run by the OnFailure= unit when a scheduled restic job
 # fails. Leave empty to skip deploying the failure handler. Example for
