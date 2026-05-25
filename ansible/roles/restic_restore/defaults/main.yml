@@ -1,0 +1,76 @@
+---
+# restic_restore role defaults
+
+# ----- Interface with the `restic` role -----
+# Both paths must exist on the host before this role runs. They are the
+# contract: restic_restore does not install restic, does not write the env
+# file, does not know which backend the repository lives on. The `restic`
+# role establishes both; this role consumes them.
+restic_restore_binary_path: /usr/local/bin/restic
+restic_restore_env_file: /etc/restic/env
+
+# ----- Repository reachability -----
+# When false (default), an unreachable repo (e.g. /data not mounted, network
+# backend down) is reported as a warning and all bundles are skipped. The
+# expected use is fresh deployments before any backups exist. Set true when
+# you want a missing repo to fail the play.
+restic_restore_fail_on_missing_repo: false
+
+# ----- Marker directory -----
+# Diagnostic record of which snapshot was used to populate each bundle. The
+# marker is informational only — idempotency is decided from on-disk state,
+# not from this file.
+restic_restore_marker_dir: /var/lib/restic_restore
+
+# ----- Bundles to restore -----
+# Each bundle is a dict with these keys:
+#
+#   name (required):
+#     Identifier used in task names, log output, and the marker file path.
+#
+#   paths (required):
+#     Absolute paths to restore from the chosen snapshot. All paths in a
+#     bundle are restored together from a single snapshot — never composed
+#     across snapshots. Use this when several directories must remain
+#     internally consistent (e.g. Let's Encrypt accounts/live/archive/renewal).
+#
+#   snapshot_selector (required):
+#     Dict with these subkeys, all optional but at least one usually needed:
+#       tags:  list of tags the snapshot must carry
+#       host:  hostname the snapshot was taken from
+#       paths: list of snapshot-metadata paths to filter on. Defaults to
+#              `paths` above if omitted. Note: restic's --path matches a
+#              snapshot's TOP-LEVEL backup paths, not arbitrary entries
+#              inside them. If you back up /etc and restore /etc/letsencrypt,
+#              set snapshot_selector.paths: [/etc] explicitly.
+#       latest: bool, default true. Pick the most recent matching snapshot.
+#               Currently only true is supported; if false, the bundle will
+#               still pick the latest match (first-match across multiple is
+#               not meaningful for restore).
+#
+#   target (optional):
+#     Relocate the restore. When unset, files land at their original paths.
+#     When set (e.g. "/restore"), files land under <target><path> — i.e.
+#     `target: /restore` with `paths: [/etc/letsencrypt]` writes to
+#     /restore/etc/letsencrypt. The idempotency check inspects the effective
+#     target paths, not the original snapshot paths.
+#
+#   restore_required (optional, default false):
+#     When true, fail the play if no snapshot matches the selector. When
+#     false (default), warn and move on so fresh deployments without prior
+#     backups continue past this bundle and let downstream roles converge
+#     from scratch.
+#
+#   owner, group (optional):
+#     Enforce recursive ownership on the effective target paths after the
+#     restore completes. Either or both may be set.
+#
+#   dir_mode, file_mode (optional):
+#     Enforce modes on directories and regular files separately, recursively,
+#     after the restore. Strings, e.g. "0755" / "0600".
+#
+#   pre_restore_hook, post_restore_hook (optional):
+#     Shell commands run before and after the restore for this bundle. The
+#     restic environment file is NOT pre-sourced — the hook handles its own
+#     environment. Run with /bin/bash; non-zero exit fails the play.
+restic_restore_bundles: []

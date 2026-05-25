@@ -1,0 +1,130 @@
+---
+# ============================================================================
+# restic_restore — restore state bundles from a restic repository.
+#
+# Runs after the `restic` role has installed the binary and written the env
+# file. Treats both as a hard interface contract (see gate below).
+#
+# Check mode policy:
+#   Every action that would run in a real execution must still appear in the
+#   check-mode output. Gate failures and probe failures are downgraded to
+#   warnings under --check so the operator can inspect the full action set
+#   for every bundle. Real runs honour the configured failure flags.
+# ============================================================================
+
+# ----- Gate: the restic binary and env file must be present -----
+
+- name: Stat restic binary
+  ansible.builtin.stat:
+    path: "{{ restic_restore_binary_path }}"
+  register: _restic_restore_binary_stat
+
+- name: Stat restic env file
+  ansible.builtin.stat:
+    path: "{{ restic_restore_env_file }}"
+  register: _restic_restore_env_stat
+
+- name: Compute gate status
+  ansible.builtin.set_fact:
+    _restic_restore_gate_ok: >-
+      {{ (_restic_restore_binary_stat.stat.exists | bool)
+         and (_restic_restore_env_stat.stat.exists | bool) }}
+    _restic_restore_gate_missing: >-
+      {{ ([] if _restic_restore_binary_stat.stat.exists else [restic_restore_binary_path])
+         + ([] if _restic_restore_env_stat.stat.exists else [restic_restore_env_file]) }}
+
+- name: Fail when restic is not installed (real run)
+  ansible.builtin.fail:
+    msg: >-
+      restic_restore requires the `restic` role to have run first.
+      Missing: {{ _restic_restore_gate_missing | join(', ') }}.
+  when:
+    - not (_restic_restore_gate_ok | bool)
+    - not ansible_check_mode
+
+- name: Warn when restic is not installed (check mode continues)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: restic_restore gate would fail in a real run.
+      Missing: {{ _restic_restore_gate_missing | join(', ') }}.
+      Continuing check-mode inspection so the full per-bundle plan is visible.
+  when:
+    - not (_restic_restore_gate_ok | bool)
+    - ansible_check_mode
+
+# ----- Probe: is the repository reachable? -----
+#
+# `restic snapshots --json --last 1` is the cheapest read-only call against
+# the configured repository. Non-zero exit means the backend is unreachable
+# (mount missing, network down, credentials wrong). check_mode: false is
+# safe — the command does not mutate anything on the host or in the repo.
+
+- name: Probe restic repository reachability
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      set -a
+      . {{ restic_restore_env_file }}
+      set +a
+      {{ restic_restore_binary_path }} snapshots --json --last 1 >/dev/null
+  args:
+    executable: /bin/bash
+  register: _restic_restore_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _restic_restore_gate_ok | bool
+
+- name: Compute repo reachability
+  ansible.builtin.set_fact:
+    _restic_restore_repo_ok: >-
+      {{ (_restic_restore_gate_ok | bool)
+         and ((_restic_restore_probe.rc | default(1)) == 0) }}
+
+- name: Fail when repo is unreachable (real run, fail_on_missing_repo=true)
+  ansible.builtin.fail:
+    msg: |
+      Restic repository is not reachable.
+      probe rc={{ _restic_restore_probe.rc | default('n/a') }}
+      stderr: {{ _restic_restore_probe.stderr | default('') | trim }}
+  when:
+    - _restic_restore_gate_ok | bool
+    - not (_restic_restore_repo_ok | bool)
+    - restic_restore_fail_on_missing_repo | bool
+    - not ansible_check_mode
+
+- name: Warn when repo is unreachable (bundles will be skipped)
+  ansible.builtin.debug:
+    msg: |
+      WARNING: restic repository unreachable.
+      probe rc={{ _restic_restore_probe.rc | default('n/a') }}
+      stderr: {{ _restic_restore_probe.stderr | default('') | trim }}
+      {% if ansible_check_mode and restic_restore_fail_on_missing_repo %}
+      A real run with fail_on_missing_repo=true would fail here.
+      Continuing check-mode inspection so the per-bundle plan is visible.
+      {% else %}
+      All bundles will be skipped (fail_on_missing_repo=false).
+      {% endif %}
+  when:
+    - _restic_restore_gate_ok | bool
+    - not (_restic_restore_repo_ok | bool)
+    - (not restic_restore_fail_on_missing_repo) or ansible_check_mode
+
+# ----- Marker directory -----
+
+- name: Ensure marker directory exists
+  ansible.builtin.file:
+    path: "{{ restic_restore_marker_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# ----- Per-bundle restore loop -----
+
+- name: Restore bundles
+  ansible.builtin.include_tasks: restore_bundle.yml
+  loop: "{{ restic_restore_bundles }}"
+  loop_control:
+    loop_var: _restic_restore_bundle
+    label: "{{ _restic_restore_bundle.name | default('<unnamed>') }}"

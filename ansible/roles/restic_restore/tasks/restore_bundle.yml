@@ -1,0 +1,449 @@
+---
+# ============================================================================
+# Per-bundle restore. Included from main.yml in a loop with
+# loop_var: _restic_restore_bundle.
+#
+# Per-bundle facts (re-initialised below) used downstream:
+#   _restic_restore_effective_targets    list of paths to check / chmod / chown
+#   _restic_restore_targets_populated    bool; true means skip (idempotency)
+#   _restic_restore_snapshot_resolved    bool; true means chosen snapshot usable
+#   _restic_restore_chosen_snapshot      dict from `restic snapshots --json` or {}
+#   _restic_restore_selector_paths       effective snapshot --path filter
+# ============================================================================
+
+- name: Validate bundle definition
+  ansible.builtin.assert:
+    that:
+      - _restic_restore_bundle.name is defined
+      - _restic_restore_bundle.name | length > 0
+      - _restic_restore_bundle.paths is defined
+      - _restic_restore_bundle.paths | length > 0
+    fail_msg: "Each entry in restic_restore_bundles must define non-empty `name` and `paths`."
+
+- name: Reset per-bundle facts
+  ansible.builtin.set_fact:
+    _restic_restore_targets_populated: false
+    _restic_restore_snapshot_resolved: false
+    _restic_restore_chosen_snapshot: {}
+    _restic_restore_target_root: "{{ _restic_restore_bundle.target | default('') | regex_replace('/+$', '') }}"
+    _restic_restore_selector_paths: >-
+      {{ _restic_restore_bundle.snapshot_selector.paths
+         if (_restic_restore_bundle.snapshot_selector is defined
+             and _restic_restore_bundle.snapshot_selector.paths is defined)
+         else _restic_restore_bundle.paths }}
+
+- name: Compute effective target paths
+  ansible.builtin.set_fact:
+    _restic_restore_effective_targets: >-
+      {{ _restic_restore_bundle.paths
+         | map('regex_replace', '^', _restic_restore_target_root) | list }}
+
+# ----- Idempotency: are ALL effective targets already populated? -----
+#
+# Source of truth is on-disk state. The marker file is informational only:
+# if the operator wiped a target dir, we re-restore; if a target exists from
+# a non-restore source (e.g. an earlier hand-bootstrap), we treat it as
+# populated and leave it alone — we don't claim a marker we didn't earn.
+
+- name: Probe target population
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      p={{ item | quote }}
+      if [ -d "$p" ]; then
+        if [ -n "$(ls -A "$p" 2>/dev/null)" ]; then
+          echo populated
+        else
+          echo empty
+        fi
+      elif [ -f "$p" ] && [ -s "$p" ]; then
+        echo populated
+      else
+        echo empty
+      fi
+  args:
+    executable: /bin/bash
+  register: _restic_restore_target_pop
+  changed_when: false
+  check_mode: false
+  loop: "{{ _restic_restore_effective_targets }}"
+
+- name: Decide idempotency from target population
+  ansible.builtin.set_fact:
+    _restic_restore_targets_populated: >-
+      {{ (_restic_restore_target_pop.results
+           | map(attribute='stdout') | map('trim') | list
+           | select('equalto', 'populated') | list | length)
+         == (_restic_restore_effective_targets | length) }}
+
+# ----- Snapshot selection -----
+#
+# Only queried when gate and probe both succeeded; otherwise check-mode
+# inspection falls through with _restic_restore_snapshot_resolved=false and
+# the plan summary below reports "unresolved".
+
+- name: Query snapshots matching selector
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      set -a
+      . {{ restic_restore_env_file }}
+      set +a
+      {{ restic_restore_binary_path }} snapshots --json \
+        {% for t in (_restic_restore_bundle.snapshot_selector.tags | default([])) %}
+        --tag {{ t | quote }} \
+        {% endfor %}
+        {% if _restic_restore_bundle.snapshot_selector is defined
+              and _restic_restore_bundle.snapshot_selector.host is defined %}
+        --host {{ _restic_restore_bundle.snapshot_selector.host | quote }} \
+        {% endif %}
+        {% for p in _restic_restore_selector_paths %}
+        --path {{ p | quote }} \
+        {% endfor %}
+        --last 0
+  args:
+    executable: /bin/bash
+  register: _restic_restore_snapshots_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+
+- name: Pick the most recent matching snapshot
+  ansible.builtin.set_fact:
+    _restic_restore_chosen_snapshot: >-
+      {{ ((_restic_restore_snapshots_raw.stdout | default('[]')) | from_json
+          | sort(attribute='time') | last) | default({}) }}
+    _restic_restore_snapshot_resolved: >-
+      {{ ((_restic_restore_snapshots_raw.stdout | default('[]')) | from_json | length) > 0 }}
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - (_restic_restore_snapshots_raw.rc | default(1)) == 0
+
+# ----- Plan summary -----
+#
+# Always runs, with or without a successful gate/probe/resolve, so the
+# operator sees the full per-bundle plan during check mode inspection.
+# Snapshot and action strings are precomputed into facts because nested
+# Jinja control flow inside `msg: |` is hard to keep whitespace-clean.
+
+- name: Compose plan summary fields
+  ansible.builtin.set_fact:
+    _restic_restore_plan_snapshot: >-
+      {% if _restic_restore_snapshot_resolved %}
+      {{- _restic_restore_chosen_snapshot.short_id | default(_restic_restore_chosen_snapshot.id) }}
+        @ {{ _restic_restore_chosen_snapshot.time }}
+        (host={{ _restic_restore_chosen_snapshot.hostname | default('?') }},
+         tags={{ _restic_restore_chosen_snapshot.tags | default([]) }})
+      {%- elif _restic_restore_gate_ok and _restic_restore_repo_ok -%}
+      no matching snapshot
+      {%- else -%}
+      unresolved (gate/repo failure — would query in a real run)
+      {%- endif %}
+    _restic_restore_plan_action: >-
+      {%- if _restic_restore_targets_populated -%}
+      SKIP (target already populated; idempotency guard)
+      {%- elif not _restic_restore_gate_ok or not _restic_restore_repo_ok -%}
+      SKIP (gate/repo not ok)
+      {%- if (not _restic_restore_snapshot_resolved)
+             and (_restic_restore_bundle.restore_required | default(false))
+             and ansible_check_mode %} — real run with restore_required=true would fail
+      {%- endif -%}
+      {%- elif not _restic_restore_snapshot_resolved -%}
+        {%- if _restic_restore_bundle.restore_required | default(false) -%}
+        FAIL (no matching snapshot, restore_required=true)
+        {%- else -%}
+        SKIP (no matching snapshot, restore_required=false)
+        {%- endif -%}
+      {%- else -%}
+      RESTORE
+      {%- if _restic_restore_bundle.pre_restore_hook is defined %} +pre-hook{% endif -%}
+      {%- if _restic_restore_bundle.dir_mode is defined %} +dir_mode={{ _restic_restore_bundle.dir_mode }}{% endif -%}
+      {%- if _restic_restore_bundle.file_mode is defined %} +file_mode={{ _restic_restore_bundle.file_mode }}{% endif -%}
+      {%- if _restic_restore_bundle.owner is defined
+             or _restic_restore_bundle.group is defined -%}
+      {{ ' +chown=' }}
+      {{- _restic_restore_bundle.owner | default('') -}}
+      :
+      {{- _restic_restore_bundle.group | default('') -}}
+      {%- endif -%}
+      {%- if _restic_restore_bundle.post_restore_hook is defined %} +post-hook{% endif -%}
+      {%- endif %}
+
+- name: Plan summary
+  ansible.builtin.debug:
+    msg: |-
+      bundle:            {{ _restic_restore_bundle.name }}
+      paths:             {{ _restic_restore_bundle.paths }}
+      target:            {{ _restic_restore_target_root if _restic_restore_target_root != '' else '(original)' }}
+      selector_tags:     {{ _restic_restore_bundle.snapshot_selector.tags | default([]) }}
+      selector_host:     {{ _restic_restore_bundle.snapshot_selector.host | default('(any)') }}
+      selector_paths:    {{ _restic_restore_selector_paths }}
+      restore_required:  {{ _restic_restore_bundle.restore_required | default(false) }}
+      gate:              {{ 'ok' if _restic_restore_gate_ok else 'FAILED (binary or env missing)' }}
+      repo:              {{ 'reachable' if _restic_restore_repo_ok else 'UNREACHABLE' }}
+      snapshot:          {{ _restic_restore_plan_snapshot }}
+      targets_populated: {{ _restic_restore_targets_populated }}
+      action:            {{ _restic_restore_plan_action }}
+
+# ----- No-snapshot handling (real runs) -----
+
+- name: Fail when no snapshot matches and restore_required is true
+  ansible.builtin.fail:
+    msg: |
+      No restic snapshot matches the selector for bundle '{{ _restic_restore_bundle.name }}'.
+      Selector: tags={{ _restic_restore_bundle.snapshot_selector.tags | default([]) }}
+                host={{ _restic_restore_bundle.snapshot_selector.host | default('(any)') }}
+                paths={{ _restic_restore_selector_paths }}
+      restore_required=true.
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - not (_restic_restore_targets_populated | bool)
+    - not (_restic_restore_snapshot_resolved | bool)
+    - _restic_restore_bundle.restore_required | default(false) | bool
+    - not ansible_check_mode
+
+# ============================================================================
+# Everything below only runs when we have a snapshot AND the targets aren't
+# already populated. All tasks share the same `when:` gate.
+# ============================================================================
+
+- name: Run pre_restore_hook
+  ansible.builtin.shell:
+    cmd: "{{ _restic_restore_bundle.pre_restore_hook }}"
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - _restic_restore_bundle.pre_restore_hook is defined
+
+- name: Restore bundle from chosen snapshot
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      set -a
+      . {{ restic_restore_env_file }}
+      set +a
+      {{ restic_restore_binary_path }} restore {{ _restic_restore_chosen_snapshot.id | quote }} \
+        --target {{ (_restic_restore_target_root if _restic_restore_target_root != '' else '/') | quote }} \
+        --verify \
+        {% for p in _restic_restore_bundle.paths %}
+        --include {{ p | quote }} \
+        {% endfor %}
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+
+# ----- Modes: detect drift, then enforce -----
+#
+# Two-phase pattern per the spec: a read-only `find` reports any entry whose
+# permission bits diverge from the desired mode, and a second `find -exec
+# chmod` only runs (and only reports `changed`) when the first reports drift.
+
+- name: Detect directories with wrong mode
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ item }}"
+      - -type
+      - d
+      - -not
+      - -perm
+      - "{{ _restic_restore_bundle.dir_mode }}"
+  register: _restic_restore_dir_mode_drift
+  changed_when: false
+  check_mode: false
+  loop: "{{ _restic_restore_effective_targets }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - _restic_restore_bundle.dir_mode is defined
+
+- name: Enforce dir_mode on drifted directories
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ item.item }}"
+      - -type
+      - d
+      - -not
+      - -perm
+      - "{{ _restic_restore_bundle.dir_mode }}"
+      - -exec
+      - chmod
+      - "{{ _restic_restore_bundle.dir_mode }}"
+      - "{}"
+      - "+"
+  loop: "{{ _restic_restore_dir_mode_drift.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - _restic_restore_bundle.dir_mode is defined
+    - (item.stdout | default('')) | trim | length > 0
+  changed_when: true
+
+- name: Detect files with wrong mode
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ item }}"
+      - -type
+      - f
+      - -not
+      - -perm
+      - "{{ _restic_restore_bundle.file_mode }}"
+  register: _restic_restore_file_mode_drift
+  changed_when: false
+  check_mode: false
+  loop: "{{ _restic_restore_effective_targets }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - _restic_restore_bundle.file_mode is defined
+
+- name: Enforce file_mode on drifted files
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ item.item }}"
+      - -type
+      - f
+      - -not
+      - -perm
+      - "{{ _restic_restore_bundle.file_mode }}"
+      - -exec
+      - chmod
+      - "{{ _restic_restore_bundle.file_mode }}"
+      - "{}"
+      - "+"
+  loop: "{{ _restic_restore_file_mode_drift.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - _restic_restore_bundle.file_mode is defined
+    - (item.stdout | default('')) | trim | length > 0
+  changed_when: true
+
+# ----- Ownership: detect drift, then enforce -----
+#
+# Single-shot detection per target via `find ... -print -quit`: short-circuits
+# at the first non-conforming entry, so we only know "drift exists" not the
+# full list. That's enough to decide whether the chown -R needs to run.
+
+- name: Detect ownership drift
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      find {{ item | quote }} \
+        {% if _restic_restore_bundle.owner is defined
+              and _restic_restore_bundle.group is defined %}
+        \( -not -user {{ _restic_restore_bundle.owner | quote }} \
+           -o -not -group {{ _restic_restore_bundle.group | quote }} \) \
+        {% elif _restic_restore_bundle.owner is defined %}
+        -not -user {{ _restic_restore_bundle.owner | quote }} \
+        {% elif _restic_restore_bundle.group is defined %}
+        -not -group {{ _restic_restore_bundle.group | quote }} \
+        {% endif %}
+        -print -quit
+  args:
+    executable: /bin/bash
+  register: _restic_restore_own_drift
+  changed_when: false
+  check_mode: false
+  loop: "{{ _restic_restore_effective_targets }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - (_restic_restore_bundle.owner is defined) or (_restic_restore_bundle.group is defined)
+
+- name: Enforce ownership on drifted paths
+  ansible.builtin.command:
+    argv:
+      - chown
+      - -R
+      - >-
+        {{ (_restic_restore_bundle.owner | default('')) ~ ':'
+           ~ (_restic_restore_bundle.group | default(''))
+           | regex_replace('^:$', '') }}
+      - "{{ item.item }}"
+  loop: "{{ _restic_restore_own_drift.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - (_restic_restore_bundle.owner is defined) or (_restic_restore_bundle.group is defined)
+    - (item.stdout | default('')) | trim | length > 0
+  changed_when: true
+
+- name: Run post_restore_hook
+  ansible.builtin.shell:
+    cmd: "{{ _restic_restore_bundle.post_restore_hook }}"
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - _restic_restore_bundle.post_restore_hook is defined
+
+# ----- Marker file (diagnostic only) -----
+
+- name: Write marker file
+  ansible.builtin.copy:
+    content: "{{ _restic_restore_marker | to_nice_json }}\n"
+    dest: "{{ restic_restore_marker_dir }}/{{ _restic_restore_bundle.name }}.json"
+    owner: root
+    group: root
+    mode: "0640"
+  vars:
+    _restic_restore_marker:
+      bundle: "{{ _restic_restore_bundle.name }}"
+      snapshot_id: "{{ _restic_restore_chosen_snapshot.id }}"
+      snapshot_short_id: "{{ _restic_restore_chosen_snapshot.short_id | default('') }}"
+      snapshot_time: "{{ _restic_restore_chosen_snapshot.time }}"
+      snapshot_hostname: "{{ _restic_restore_chosen_snapshot.hostname | default('') }}"
+      snapshot_tags: "{{ _restic_restore_chosen_snapshot.tags | default([]) }}"
+      restored_at: "{{ ansible_facts['date_time']['iso8601'] | default('') }}"
+      paths: "{{ _restic_restore_bundle.paths }}"
+      target: "{{ _restic_restore_target_root }}"
+      selector:
+        tags: "{{ _restic_restore_bundle.snapshot_selector.tags | default([]) }}"
+        host: "{{ _restic_restore_bundle.snapshot_selector.host | default('') }}"
+        paths: "{{ _restic_restore_selector_paths }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
