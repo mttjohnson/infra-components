@@ -1,0 +1,120 @@
+---
+# Create Group
+- name: Create a group for the bot user
+  ansible.builtin.group:
+    name: "{{ bot_dev_group }}"
+    state: present
+
+# Create User
+- name: Create a user for the bot to use
+  ansible.builtin.user:
+    name: "{{ bot_dev_user }}"
+    group: "{{ bot_dev_group }}"
+    comment: "{{ bot_dev_user }} bot"
+    create_home: true
+    home: "/home/{{ bot_dev_user }}"
+    password: "!"
+    shell: /bin/bash
+
+- name: import user ssh-keys for the bot
+  ansible.posix.authorized_key:
+    user: "{{ bot_dev_user }}"
+    key: "{{ lookup('file', bot_dev_authorized_pubkey) }}"
+    exclusive: false
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Ensure .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ bot_dev_user }}/.ssh"
+    state: directory
+    owner: "{{ bot_dev_user }}"
+    group: "{{ bot_dev_group | default(bot_dev_user) }}"
+    mode: '0700'
+  register: _bot_dev_create_ssh_dir
+
+- name: Generate SSH key pair for user
+  community.crypto.openssh_keypair:
+    path: "/home/{{ bot_dev_user }}/.ssh/{{ bot_dev_ssh_key_name | default('id_ed25519') }}"
+    type: "{{ bot_dev_ssh_key_type | default('ed25519') }}"
+    size: "{{ bot_dev_ssh_key_size | default(omit) }}"
+    comment: "{{ bot_dev_ssh_key_comment | default(bot_dev_user ~ '@' ~ inventory_hostname) }}"
+    owner: "{{ bot_dev_user }}"
+    group: "{{ bot_dev_group | default(bot_dev_user) }}"
+    mode: '0600'
+    state: present
+    regenerate: never
+  ignore_errors: "{{ _bot_dev_create_ssh_dir.changed and ansible_check_mode }}"
+
+- name: create directories for remote_tmp
+  ansible.builtin.file:
+    path: "/home/{{ bot_dev_user }}/.ansible/tmp"
+    mode: "0700"
+    owner: "{{ bot_dev_user }}"
+    group: "{{ bot_dev_group }}"
+    state: directory
+
+- name: create projects directory
+  ansible.builtin.file:
+    path: /data/projects
+    mode: "0770"
+    owner: "{{ bot_dev_user }}"
+    group: "{{ bot_dev_group }}"
+    state: directory
+  register: _bot_dev_create_projects_dir
+
+# - name: Create symlink for projects directory
+#   ansible.builtin.file:
+#     src: /data/projects
+#     dest: "/home/{{ bot_dev_user }}/projects"
+#     state: link
+#     owner: "{{ bot_dev_user }}"
+#     group: "{{ bot_dev_group }}"
+#   become: true
+#   become_user: "{{ bot_dev_user }}"
+
+# Bind Mount Projects (bind mount works better than symlink for mutagen sync support)
+- name: Ensure mount point exists
+  ansible.builtin.file:
+    path: "/home/{{ bot_dev_user }}/projects"
+    state: directory
+    owner: "{{ bot_dev_user }}"
+    group: "{{ bot_dev_group }}"
+    mode: '0755'
+
+- name: Bind mount /data/projects to user projects directory
+  ansible.posix.mount:
+    path: "/home/{{ bot_dev_user }}/projects"
+    src: /data/projects
+    opts: bind
+    state: mounted
+    fstype: none
+  ignore_errors: "{{ _bot_dev_create_projects_dir.changed and ansible_check_mode }}"
+
+- name: "dev tool apt packages"
+  ansible.builtin.package:
+    name:
+      - unzip
+      - screen
+      - btop
+      - git
+      - ripgrep
+      - miller
+      - bat
+      - lsof
+      - duf
+      - mtr
+      - nmap
+      - tmux
+      - gh
+      - shellcheck
+    state: present
+
+- name: "dev tool snap packages"
+  community.general.snap:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - dust
+    - doggo
+    - ruff
+    # - prettier

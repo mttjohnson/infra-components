@@ -1,0 +1,8 @@
+---
+bot_dev_user: botdev
+bot_dev_group: botdev
+bot_dev_authorized_pubkey: ~/.ssh/id_ed25519.pub
+bot_dev_ssh_key_type: ed25519
+bot_dev_ssh_key_name: id_ed25519
+# bot_dev_ssh_key_comment: optional override
+# bot_dev_ssh_key_size: optional override
