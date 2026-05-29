@@ -1,0 +1,33 @@
+---
+- name: Ensure required system dependencies are installed
+  ansible.builtin.package:
+    name: "{{ antigravity_dependencies }}"
+    state: present
+ 
+- name: Check if Antigravity CLI (agy) is already installed
+  ansible.builtin.stat:
+    path: "{{ antigravity_bin_dir }}/agy"
+  register: agy_binary
+
+- name: "antigravity_cli | Download and run install script"
+  ansible.builtin.shell: >
+    curl -fsSL {{ antigravity_installer_url }} | bash
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ antigravity_user }}"
+  environment:
+    HOME: "/home/{{ antigravity_user }}"
+  when: not agy_binary.stat.exists or antigravity_force_reinstall
+  changed_when: true
+
+- name: Ensure ~/.local/bin is present in shell environment profile (.bashrc)
+  ansible.builtin.lineinfile:
+    path: "/home/{{ antigravity_user }}/.bashrc"
+    line: 'export PATH="$HOME/.local/bin:$PATH"'
+    regexp: '^export PATH=".*\.local/bin.*"'
+    state: present
+    create: yes
+    owner: "{{ antigravity_user }}"
+    group: "{{ antigravity_group }}"
+    mode: '0644'

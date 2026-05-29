@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: Matt Johnson
+  description: Automates user-level deployment of the Google Antigravity CLI coding agent interface.
+  platforms:
+    - name: Ubuntu
+      versions:
+        - "resolute"
+  license: MIT
+  min_ansible_version: "2.15"
+dependencies: []

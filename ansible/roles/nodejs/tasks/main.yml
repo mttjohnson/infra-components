@@ -1,0 +1,88 @@
+---
+- name: Check for GPG key
+  ansible.builtin.stat:
+    path: "{{ nodejs_nodesource_gpg_dest_path }}"
+  register: nodesource_gpg_key_stat
+
+- name: "Make sure cache directory for downloads exists"
+  ansible.builtin.file:
+    path: "{{ nodejs_cache_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download nodesource GPG key with checksum
+  ansible.builtin.get_url:
+    url: "{{ nodejs_nodesource_gpg_key_url }}"
+    dest: "{{ nodejs_cache_dir }}/nodesource-repo.gpg.key"
+    checksum: "{{ nodejs_nodesource_gpg_key_url_checksum }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Add nodesource key
+  ansible.builtin.shell:
+    cmd: |
+      cat "{{ nodejs_cache_dir }}/nodesource-repo.gpg.key" | gpg --dearmor -o "{{ nodejs_nodesource_gpg_dest_path }}"
+    creates: "{{ nodejs_nodesource_gpg_dest_path }}"
+
+- name: planning to run - Make sure gpg key matches expected fingerprint
+  ansible.builtin.debug:
+    msg: |
+      gpg --homedir /tmp --no-default-keyring --keyring "{{ nodejs_nodesource_gpg_dest_path }}" --list-keys {{ nodejs_nodesource_gpg_key_fingerprint }}
+  changed_when: false
+  when: not nodesource_gpg_key_stat.stat.exists
+- name: Make sure gpg key matches expected fingerprint
+  ansible.builtin.shell: 
+    cmd: |
+      gpg --homedir /tmp --no-default-keyring --keyring "{{ nodejs_nodesource_gpg_dest_path }}" --list-keys {{ nodejs_nodesource_gpg_key_fingerprint }}
+  register: nodesource_check_key_fingerprint
+  check_mode: false
+  changed_when: false
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: not ansible_check_mode or nodesource_gpg_key_stat.stat.exists
+
+- name: Get DPKG architecture
+  ansible.builtin.command:
+    cmd: dpkg --print-architecture
+  register: _nodejs_dpkg_arch
+  changed_when: false
+  check_mode: false
+
+- name: Add nodesource apt repository
+  ansible.builtin.deb822_repository:
+    name: "{{ nodejs_apt_repo_name }}"
+    types: deb
+    uris: "{{ nodejs_apt_repo_url }}"
+    suites: "{{ nodejs_apt_suite }}"
+    components: "{{ nodejs_apt_component }}"
+    architectures: "{{ _nodejs_dpkg_arch.stdout }}"
+    signed_by: "{{ nodejs_nodesource_gpg_dest_path }}"
+    state: present
+    enabled: true
+  register: _nodejs_repo
+  notify: Update apt cache
+
+- name: Prefer nodejs from NodeSource
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/nodesource-nodejs
+    mode: "0644"
+    content: |
+      Package: nodejs
+      Pin: origin deb.nodesource.com
+      Pin-Priority: 600
+
+- name: Ensure handlers are notified now
+  ansible.builtin.meta: flush_handlers
+
+- name: Install nodejs
+  ansible.builtin.apt:
+    name: nodejs
+    state: latest
+    update_cache: true
+    cache_valid_time: 3600
+  ignore_errors: "{{ ansible_check_mode and _nodejs_repo.changed }}"
+
+- name: enable pnpm via corepack
+  ansible.builtin.shell:
+    cmd: |
+      corepack enable pnpm
+    creates: /usr/bin/pnpm
+  when: nodejs_enable_pnpm

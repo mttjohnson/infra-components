@@ -1,0 +1,14 @@
+---
+codex_user: codexuser
+codex_user_home: "/home/{{ codex_user }}"
+
+# Use "latest" or pin, for example "0.130.0"
+codex_version: latest
+
+codex_npm_prefix: "{{ codex_user_home }}/.local/npm-global"
+codex_bin_dir: "{{ codex_npm_prefix }}/bin"
+codex_package: "@openai/codex"
+
+# Choose where to expose PATH for interactive shells.
+codex_manage_profile: true
+codex_profile_file: "{{ codex_user_home }}/.profile"
