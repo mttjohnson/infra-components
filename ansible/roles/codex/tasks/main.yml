@@ -41,23 +41,24 @@
       export PATH="{{ codex_bin_dir }}:$PATH"
   when: codex_manage_profile | bool
 
+# Use the npm module rather than a raw `npm install -g` command: it supports
+# check mode (its read-only `npm list` / `npm outdated` queries run during a dry
+# run, so --check accurately predicts whether an install/upgrade would happen
+# without applying it) and is idempotent (a converged system reports no change).
+# state: latest checks the registry for upgrades when codex_version is "latest";
+# state: present with a pinned version installs only when that version is absent.
 - name: Install Codex CLI with npm for target user
-  ansible.builtin.command:
-    cmd: >-
-      npm install -g
-      {{ codex_package }}{% if codex_version != 'latest' %}@{{ codex_version }}{% endif %}
+  community.general.npm:
+    name: "{{ codex_package }}"
+    version: "{{ omit if codex_version == 'latest' else codex_version }}"
+    state: "{{ 'latest' if codex_version == 'latest' else 'present' }}"
+    global: true
   become: true
   become_user: "{{ codex_user }}"
   environment:
     HOME: "{{ codex_user_home }}"
     PATH: "{{ codex_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
     npm_config_prefix: "{{ codex_npm_prefix }}"
-  register: codex_npm_install
-  changed_when: >
-    'added ' in codex_npm_install.stdout or
-    'changed ' in codex_npm_install.stdout or
-    'removed ' in codex_npm_install.stdout or
-    'updated ' in codex_npm_install.stdout
 
 - name: Verify codex binary is available
   ansible.builtin.command:
