@@ -1,0 +1,18 @@
+---
+opencode_user: botdev
+opencode_user_home: "/home/{{ opencode_user }}"
+
+# Use "latest" or pin, for example "1.15.13"
+opencode_version: latest
+
+opencode_npm_prefix: "{{ opencode_user_home }}/.local/npm-global"
+opencode_bin_dir: "{{ opencode_npm_prefix }}/bin"
+opencode_package: opencode-ai
+
+# Choose where to expose PATH for interactive shells.
+opencode_manage_profile: true
+opencode_profile_file: "{{ opencode_user_home }}/.profile"
+
+# Verify the npm registry (Sigstore) signatures of the installed package(s)
+# after install. Fails the play if a signature is missing or invalid.
+opencode_verify_signatures: true

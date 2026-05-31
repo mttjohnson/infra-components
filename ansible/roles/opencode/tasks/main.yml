@@ -1,0 +1,96 @@
+---
+# OpenCode is distributed as a standalone compiled binary delivered through the
+# `opencode-ai` npm wrapper, which pulls the correct per-platform binary
+# (glibc/musl, baseline/AVX2) as an optionalDependency. npm is preferred over the
+# upstream `curl | bash` installer because it is idempotent, check-mode safe,
+# pins/upgrades cleanly, and ships npm registry signatures we can verify — the
+# install script and raw GitHub tarballs publish no checksum or signature at all.
+
+- name: Verify npm is available
+  ansible.builtin.command: npm --version
+  changed_when: false
+  check_mode: false
+
+- name: Ensure user-local npm directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ opencode_user }}"
+    group: "{{ opencode_user }}"
+    mode: "0755"
+  loop:
+    - "{{ opencode_npm_prefix }}"
+    - "{{ opencode_bin_dir }}"
+
+- name: Configure npm global prefix for target user in ~/.npmrc
+  ansible.builtin.command:
+    cmd: "npm config set prefix {{ opencode_npm_prefix }}"
+  become: true
+  become_user: "{{ opencode_user }}"
+  environment:
+    HOME: "{{ opencode_user_home }}"
+  changed_when: false
+
+- name: Ensure npm global bin directory is on PATH for login shells
+  ansible.builtin.blockinfile:
+    path: "{{ opencode_profile_file }}"
+    create: true
+    owner: "{{ opencode_user }}"
+    group: "{{ opencode_user }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - opencode cli"
+    block: |
+      export PATH="{{ opencode_bin_dir }}:$PATH"
+  when: opencode_manage_profile | bool
+
+# Use the npm module rather than a raw `npm install -g` command: it supports
+# check mode (its read-only `npm list` / `npm outdated` queries run during a dry
+# run, so --check accurately predicts whether an install/upgrade would happen
+# without applying it) and is idempotent (a converged system reports no change).
+# state: latest checks the registry for upgrades when opencode_version is "latest";
+# state: present with a pinned version installs only when that version is absent.
+- name: Install OpenCode with npm for target user
+  community.general.npm:
+    name: "{{ opencode_package }}"
+    version: "{{ omit if opencode_version == 'latest' else opencode_version }}"
+    state: "{{ 'latest' if opencode_version == 'latest' else 'present' }}"
+    global: true
+  become: true
+  become_user: "{{ opencode_user }}"
+  environment:
+    HOME: "{{ opencode_user_home }}"
+    PATH: "{{ opencode_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+    npm_config_prefix: "{{ opencode_npm_prefix }}"
+
+# `npm audit signatures` does not support global packages directly (EAUDITGLOBAL),
+# but verifies correctly when run from inside the installed package directory. It
+# is read-only (queries the registry and checks the installed tree, writes
+# nothing) so check_mode: false is safe; it exits non-zero on a missing/invalid
+# signature, which fails the play. On a fresh check run the package dir does not
+# yet exist (install was only simulated), so errors are ignored in check mode.
+- name: Verify npm registry (Sigstore) signatures of the installed package
+  ansible.builtin.command:
+    cmd: npm audit signatures
+    chdir: "{{ opencode_npm_prefix }}/lib/node_modules/{{ opencode_package }}"
+  register: opencode_audit_signatures
+  become: true
+  become_user: "{{ opencode_user }}"
+  environment:
+    HOME: "{{ opencode_user_home }}"
+    PATH: "{{ opencode_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: opencode_verify_signatures | bool
+
+- name: Verify opencode binary is available
+  ansible.builtin.command:
+    cmd: "{{ opencode_bin_dir }}/opencode --version"
+  become: true
+  become_user: "{{ opencode_user }}"
+  environment:
+    HOME: "{{ opencode_user_home }}"
+    PATH: "{{ opencode_bin_dir }}:{{ ansible_facts['env']['PATH'] }}"
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode }}"

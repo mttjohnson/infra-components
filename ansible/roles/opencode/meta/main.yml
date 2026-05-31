@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: opencode
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Install and manage the OpenCode terminal AI coding agent for an unprivileged user via npm
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+        - resolute
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - opencode
+    - ai
+    - agent
+    - cli
+    - npm
+
+dependencies: []

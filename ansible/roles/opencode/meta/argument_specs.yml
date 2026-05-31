@@ -1,0 +1,55 @@
+---
+argument_specs:
+  main:
+    short_description: Install the OpenCode CLI for an unprivileged user via npm
+    options:
+      opencode_user:
+        type: str
+        default: botdev
+        description: Unprivileged user that OpenCode is installed for and runs as.
+      opencode_user_home:
+        type: str
+        default: "/home/{{ opencode_user }}"
+        description:
+          - Home directory of C(opencode_user).
+          - Used as C(HOME) for the npm tasks and as the base for the npm prefix.
+      opencode_version:
+        type: str
+        default: latest
+        description:
+          - Version of the C(opencode-ai) npm package to install.
+          - C(latest) tracks the newest release (npm C(state=latest)).
+          - Any other value pins that exact version (npm C(state=present)).
+      opencode_npm_prefix:
+        type: str
+        default: "{{ opencode_user_home }}/.local/npm-global"
+        description:
+          - Per-user npm global prefix, keeping the install entirely within the
+            user's home rather than touching system paths.
+      opencode_bin_dir:
+        type: str
+        default: "{{ opencode_npm_prefix }}/bin"
+        description: Directory where the C(opencode) launcher is exposed.
+      opencode_package:
+        type: str
+        default: opencode-ai
+        description: npm package name to install.
+      opencode_manage_profile:
+        type: bool
+        default: true
+        description:
+          - Whether to add C(opencode_bin_dir) to C(PATH) in
+            C(opencode_profile_file) for interactive login shells.
+      opencode_profile_file:
+        type: str
+        default: "{{ opencode_user_home }}/.profile"
+        description:
+          - Login-shell profile file updated with the PATH export when
+            C(opencode_manage_profile) is true.
+      opencode_verify_signatures:
+        type: bool
+        default: true
+        description:
+          - Run C(npm audit signatures) after install to verify the npm registry
+            (Sigstore) signatures of the installed package and its dependencies.
+          - Fails the play if any signature is missing or invalid.
