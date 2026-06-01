@@ -1,0 +1,26 @@
+---
+- hosts: all
+  name: "Mount Volume"
+  become: true
+  gather_facts: no
+  vars:
+    # Defaults if not passed in
+    device_path: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_incus_asdf
+    mount_path: /asdf
+    filesystem_type: ext4
+    mount_opts: defaults,nofail,noatime,nodiratime,_netdev
+
+  tasks:
+    - community.general.filesystem:
+        fstype: "{{ filesystem_type }}"
+        dev: "{{ device_path }}"
+        resizefs: true
+
+    - ansible.posix.mount:
+        path: "{{ mount_path }}"
+        src: "{{ device_path }}"
+        fstype: "{{ filesystem_type }}"
+        opts: "{{ mount_opts }}"
+        dump: "0"
+        passno: "2"
+        state: mounted
