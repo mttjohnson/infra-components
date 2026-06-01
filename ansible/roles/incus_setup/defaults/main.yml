@@ -19,6 +19,12 @@ incus_key_path: /var/lib/incus/server.key
 incus_cert_sym_src: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/fullchain.pem"
 incus_key_sym_src: "/etc/letsencrypt/live/{{ acme_dns_reg_cert_domains | first }}/privkey.pem"
 
+# Whether to symlink externally managed (e.g. Let's Encrypt) certs into Incus.
+# Defaults to enabled only when there are cert domains to manage, so hosts with no
+# external certs (empty acme_dns_reg_cert_domains) skip the symlink loop instead of
+# failing when incus_cert_sym_src tries to resolve `acme_dns_reg_cert_domains | first`.
+incus_setup_manage_external_certs: "{{ (acme_dns_reg_cert_domains | default([])) | length > 0 }}"
+
 incus_externally_managed_certs:
   - cert: "{{ incus_cert_path }}"
     key: "{{ incus_key_path }}"

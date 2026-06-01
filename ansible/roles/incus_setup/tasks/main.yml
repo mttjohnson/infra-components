@@ -177,7 +177,7 @@
 - name: Setup list of externally managed certs
   ansible.builtin.include_tasks:
     file: externally_managed_certs.yml
-  loop: "{{ incus_externally_managed_certs }}"
+  loop: "{{ incus_externally_managed_certs if incus_setup_manage_external_certs else [] }}"
   loop_control:
     loop_var: each_cert
 
