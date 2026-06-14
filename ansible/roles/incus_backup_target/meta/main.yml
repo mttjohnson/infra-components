@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: incus_backup_target
+  namespace: mttjohnson
+  author: Matt Johnson
+  description: Mount a Synology NFS share at a standard path on Incus hosts for backup disk devices
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - incus
+    - nfs
+    - synology
+    - backup
+    - storage
+
+dependencies: []

@@ -1,0 +1,28 @@
+---
+# Desired state of the NFS mount:
+#   mounted - mount the share now and persist it in /etc/fstab (survives reboots).
+#   absent  - unmount the share and remove the fstab entry (mount point dir is left).
+incus_backup_target_state: "mounted"
+
+# Synology NFS server host/IP and the export it publishes. Combined into the mount
+# src as "{{ incus_backup_target_nfs_host }}:{{ incus_backup_target_nfs_export }}".
+# Defaults are deliberately inert placeholders; set the real values per host/group.
+incus_backup_target_nfs_host: "127.0.0.1"
+incus_backup_target_nfs_export: "/volume/backup"
+
+# Standard local path the share is mounted at on every Incus host. Must be identical
+# fleet-wide so Incus disk devices can bind subdirectories beneath it uniformly.
+incus_backup_target_mount_path: "/srv/backup"
+
+# NFS mount options. hard + _netdev so the mount waits for networking and blocks
+# (rather than erroring) on a NAS reboot; nofail so a host still boots when the NAS
+# is unreachable; vers pinned for predictable behaviour across hosts.
+incus_backup_target_mount_opts: "vers=4.1,rw,hard,timeo=600,_netdev,noatime,nofail"
+
+# Mode of the mount point directory. This is enforced both on the local directory
+# (before the share is mounted) AND, once mounted, against the *mounted share root*
+# as the NFS server presents it. Set it to match what the server exports so the task
+# stays idempotent; otherwise every converge tries to re-chmod the share root. For an
+# all_squash export (e.g. Synology mapping all users to one identity) that is commonly
+# "0777". The default is the conservative local-mountpoint value.
+incus_backup_target_mount_dir_mode: "0755"

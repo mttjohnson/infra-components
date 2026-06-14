@@ -1,0 +1,3 @@
+---
+# No handlers. The mount is managed declaratively via ansible.posix.mount, which
+# applies (mounts/remounts/unmounts) immediately, so there is nothing to notify.

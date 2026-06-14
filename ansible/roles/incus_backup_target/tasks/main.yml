@@ -1,0 +1,57 @@
+---
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "Debian"
+    fail_msg: >-
+      incus_backup_target supports the Debian family only;
+      detected ansible_facts["os_family"]={{ ansible_facts["os_family"] }}.
+
+# nfs-common provides the NFSv4 client (mount.nfs4). apt with state=present is
+# idempotent, so this is a no-op when the package is already installed.
+- name: Install the NFS client package
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# The role only manages the host-side mount point. Per-instance subdirectories are
+# created by Incus at instance-creation time, not here.
+- name: Ensure the mount point directory exists
+  ansible.builtin.file:
+    path: "{{ incus_backup_target_mount_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ incus_backup_target_mount_dir_mode }}"
+
+- name: Manage the Synology NFS fstab entry and mount
+  ansible.posix.mount:
+    src: "{{ incus_backup_target_nfs_host }}:{{ incus_backup_target_nfs_export }}"
+    path: "{{ incus_backup_target_mount_path }}"
+    fstype: nfs4
+    opts: "{{ incus_backup_target_mount_opts }}"
+    state: "{{ incus_backup_target_state }}"
+
+# Write a host-unique probe file, read it back, and remove it. shell is skipped in
+# check mode (the module declares no check-mode support), so a dry run never touches
+# the mount; a real run fails the play with a clear message if the share is not
+# writable. Net state change is zero (the probe is removed), hence changed_when: false.
+- name: Smoke test the mount is writable
+  ansible.builtin.shell: |
+    set -uo pipefail
+    probe="{{ incus_backup_target_mount_path }}/.probe-{{ inventory_hostname }}-{{ ansible_facts['date_time']['epoch'] }}"
+    echo "incus_backup_target smoke test" > "$probe" \
+      || { echo "SMOKE TEST FAILED: cannot write under {{ incus_backup_target_mount_path }}" >&2; exit 1; }
+    grep -q "incus_backup_target smoke test" "$probe" \
+      || { echo "SMOKE TEST FAILED: cannot read back $probe" >&2; exit 1; }
+    rm -f "$probe" \
+      || { echo "SMOKE TEST FAILED: cannot remove $probe" >&2; exit 1; }
+    echo "SMOKE TEST OK: {{ incus_backup_target_mount_path }} is writable"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: incus_backup_target_state == "mounted"
+  tags:
+    - smoketest
