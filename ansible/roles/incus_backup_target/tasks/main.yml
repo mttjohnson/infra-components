@@ -55,3 +55,39 @@
   when: incus_backup_target_state == "mounted"
   tags:
     - smoketest
+
+
+
+- name: Gather existing Incus storage pools
+  ansible.builtin.command:
+    cmd: incus storage list --format csv --columns n
+  register: incus_storage_pools_existing
+  changed_when: false
+  check_mode: false
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Ensure directory storage pool source paths exist
+  ansible.builtin.file:
+    path: "{{ item.value.local_config.source }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ incus_backup_target_storage | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.value.driver == 'dir'
+    - item.value.local_config.source is defined
+
+- name: planning to run - Add storage pools
+  ansible.builtin.debug:
+    msg: |-
+      incus storage create {{ item.key }} {{ item.value.driver }}{% for k in item.value.local_config | default([]) %} {{ k }}={{ item.value.local_config[k] }}{% endfor %}{% for k in item.value.config | default([]) %} {{ k }}={{ item.value.config[k] }}{% endfor %}
+  loop: "{{ incus_backup_target_storage | dict2items }}"
+  changed_when: ansible_check_mode
+  when: item.key not in incus_storage_pools_existing.stdout_lines
+- name: Add storage pools
+  ansible.builtin.command:
+    cmd: |-
+      incus storage create {{ item.key }} {{ item.value.driver }}{% for k in item.value.local_config | default([]) %} {{ k }}={{ item.value.local_config[k] }}{% endfor %}{% for k in item.value.config | default([]) %} {{ k }}={{ item.value.config[k] }}{% endfor %}
+  loop: "{{ incus_backup_target_storage | dict2items }}"
+  when: item.key not in incus_storage_pools_existing.stdout_lines

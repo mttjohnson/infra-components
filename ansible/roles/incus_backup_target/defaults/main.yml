@@ -26,3 +26,10 @@ incus_backup_target_mount_opts: "vers=4.1,rw,hard,timeo=600,_netdev,noatime,nofa
 # all_squash export (e.g. Synology mapping all users to one identity) that is commonly
 # "0777". The default is the conservative local-mountpoint value.
 incus_backup_target_mount_dir_mode: "0755"
+
+incus_backup_target_storage: []
+# incus_backup_target_storage:
+#   nas_lab_backup:
+#     driver: dir
+#     local_config:
+#       source: "{{ incus_backup_target_mount_path }}/{{ inventory_hostname_short }}"
