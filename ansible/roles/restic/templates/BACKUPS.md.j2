@@ -13,8 +13,14 @@ Authoritative reference: https://restic.readthedocs.io/
 
 | | |
 |---|---|
-| Repository | `{{ restic_repository }}` |
+| Repository (primary) | `{{ restic_repository }}` |
+{% if _restic_secondary_enabled %}
+| Repository (secondary) | `{{ restic_secondary_repository }}` |
+{% endif %}
 | Env file | `{{ restic_config_dir }}/env` |
+{% if _restic_secondary_enabled %}
+| Env file (secondary) | `{{ restic_config_dir }}/env.secondary` |
+{% endif %}
 | Password file | `{{ restic_password_file }}` |
 | Backed-up paths | {% for p in restic_backup_paths %}`{{ p }}`{{ ", " if not loop.last else "" }}{% endfor %} |
 {% if restic_backup_excludes | length > 0 %}
@@ -28,6 +34,13 @@ Authoritative reference: https://restic.readthedocs.io/
 | Prune runs | `{{ restic_prune_schedule }}` |
 | Check (metadata) | `{{ restic_check_schedule }}` |
 | Check (data subset) | `{{ restic_check_data_schedule }}` ({{ restic_check_data_subset }}) |
+{% if _restic_secondary_enabled %}
+| Copy → secondary | `{{ restic_secondary_copy_schedule }}` |
+| Forget (secondary) | `{{ restic_secondary_forget_schedule }}` |
+| Prune (secondary) | `{{ restic_secondary_prune_schedule }}` |
+| Check (secondary) | `{{ restic_secondary_check_schedule }}` |
+| Check data (secondary) | `{{ restic_secondary_check_data_schedule }}` ({{ restic_check_data_subset }}) |
+{% endif %}
 {% else %}
 | Cron schedule | see `/etc/cron.d/restic` |
 | Job log dir | `{{ restic_log_dir }}/` |
@@ -49,6 +62,41 @@ After that, plain `restic snapshots`, `restic ls latest`, etc. work.
 (The scheduled jobs source it the same way — no separate config to
 keep in sync.)
 
+{% if _restic_secondary_enabled %}
+## Secondary repository (off-box copy)
+
+This host keeps a second, independent restic repository at
+`{{ restic_secondary_repository }}` as a copy of the primary. The
+`restic-copy` job replicates the primary into it on the
+`{{ restic_secondary_copy_schedule if restic_scheduler == "systemd" else "copy" }}`
+schedule, and the secondary gets the same forget / prune / check jobs so
+its retention and integrity match the primary.
+
+The two repos are fully independent: each has its own index and can be
+restored from on its own. To run any restic command against the
+**secondary**, source its env file instead of the primary one:
+
+```bash
+set -a
+. {{ restic_config_dir }}/env.secondary
+set +a
+
+restic snapshots                     # now lists the SECONDARY repo
+```
+
+Everything in **Restore data** below works identically against the
+secondary once `env.secondary` is sourced — no other changes.
+
+**Note on file ownership:** if the secondary is an NFS share with
+all-users-squashed-to-admin, every repository file on it is owned by the
+squash identity and ownership cannot be changed. This is harmless — restic
+does not rely on repository file ownership, and the data is encrypted, so
+the password (which never leaves this host's local disk) is the security
+boundary, not filesystem permissions. The scheduled secondary jobs refuse
+to run if `{{ restic_secondary_repository }}` is not mounted, so a missing
+mount fails loudly instead of silently writing the copy to local disk.
+
+{% endif %}
 ## See what's scheduled
 
 {% if restic_scheduler == "systemd" %}

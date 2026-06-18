@@ -293,11 +293,111 @@
     - ansible_check_mode
     - not _restic_binary_post_install.stat.exists
 
+# ----- Optional secondary repository (copy / replication target) -----
+# Initialized on first detection with chunker params copied from the primary
+# so `restic copy` deduplicates efficiently. The primary env file above is
+# left untouched — the secondary is a separate env file the copy / secondary
+# maintenance jobs source.
+
+- name: Configure secondary restic repository
+  when: _restic_secondary_enabled | bool
+  block:
+    - name: Deploy secondary restic environment file
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ restic_config_dir }}/env.secondary"
+        owner: root
+        group: root
+        mode: "0600"
+      vars:
+        _restic_env_repository: "{{ restic_secondary_repository }}"
+        _restic_env_password_file: "{{ restic_secondary_password_file }}"
+
+    # Ownership is intentionally not enforced (defaults are null -> omit): an
+    # all_squash NFS export forces the squash identity and rejects chown.
+    - name: Manage secondary local repository directory
+      when:
+        - restic_manage_secondary_repository_dir | bool
+        - restic_secondary_repository.startswith('/')
+      ansible.builtin.file:
+        path: "{{ restic_secondary_repository }}"
+        state: directory
+        owner: "{{ restic_secondary_repository_owner | default(omit, true) }}"
+        group: "{{ restic_secondary_repository_group | default(omit, true) }}"
+        mode: "{{ restic_secondary_repository_mode | default(omit, true) }}"
+
+    # Guard: refuse to initialize a repo on local disk when the backing mount
+    # is missing. mountpoint is read-only and side-effect free.
+    - name: Probe secondary repository mountpoint
+      ansible.builtin.command:
+        cmd: "mountpoint -q {{ restic_secondary_repository }}"
+      register: _restic_secondary_mountpoint
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - restic_secondary_require_mountpoint | bool
+        - restic_secondary_repository.startswith('/')
+
+    - name: Fail when secondary repository mount is missing (real run)
+      ansible.builtin.fail:
+        msg: >-
+          Secondary restic repository {{ restic_secondary_repository }} is not a
+          mountpoint. Refusing to initialize a repository on local disk. Mount
+          the backing storage, or set restic_secondary_require_mountpoint=false
+          to override.
+      when:
+        - restic_secondary_require_mountpoint | bool
+        - restic_secondary_repository.startswith('/')
+        - (_restic_secondary_mountpoint.rc | default(0)) != 0
+        - not ansible_check_mode
+
+    - name: Warn when secondary repository mount is missing (check mode)
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: secondary repository {{ restic_secondary_repository }} is not
+          a mountpoint. A real run would refuse to initialize here.
+      when:
+        - restic_secondary_require_mountpoint | bool
+        - restic_secondary_repository.startswith('/')
+        - (_restic_secondary_mountpoint.rc | default(0)) != 0
+        - ansible_check_mode
+
+    - name: Check if secondary restic repository is already initialized
+      ansible.builtin.command:
+        cmd: "{{ restic_binary_install_dir }}/restic cat config"
+      environment: "{{ _restic_secondary_runtime_env }}"
+      register: _restic_secondary_cat_config
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: _restic_binary_post_install.stat.exists
+
+    - name: Initialize secondary restic repository (chunker params from primary)
+      ansible.builtin.command:
+        cmd: >-
+          {{ restic_binary_install_dir }}/restic init
+          --copy-chunker-params
+          --from-repo {{ restic_repository }}
+          --from-password-file {{ restic_password_file }}
+      environment: "{{ _restic_secondary_runtime_env }}"
+      when:
+        - _restic_binary_post_install.stat.exists
+        - (_restic_secondary_cat_config | default({})).rc | default(1) != 0
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Report planned secondary repository initialization (check mode, no binary yet)
+      ansible.builtin.debug:
+        msg: "Would initialize secondary restic repository at {{ restic_secondary_repository }}"
+      when:
+        - ansible_check_mode
+        - not _restic_binary_post_install.stat.exists
+
 # ----- Deploy backup / forget / prune / check scripts -----
 
 - name: Deploy restic job scripts
   ansible.builtin.template:
-    src: "{{ item.script }}.j2"
+    src: "{{ (item.template | default(item.script)) }}.j2"
     dest: "{{ restic_config_dir }}/{{ item.script }}"
     owner: root
     group: root

@@ -14,10 +14,28 @@ _restic_go_arch: "{{ restic_go_arch | default(_restic_arch_map[ansible_facts['ar
 # the scheduled job scripts.
 _restic_runtime_env: "{{ {'RESTIC_REPOSITORY': restic_repository, 'RESTIC_PASSWORD_FILE': restic_password_file} | combine(restic_env) }}"
 
+# Same, but targeting the optional secondary repository. Used to probe /
+# initialize the secondary from Ansible tasks; mirrored into env.secondary
+# for the scheduled secondary jobs.
+_restic_secondary_runtime_env: "{{ {'RESTIC_REPOSITORY': restic_secondary_repository, 'RESTIC_PASSWORD_FILE': restic_secondary_password_file} | combine(restic_env) }}"
+
+# Whether the optional secondary repository is configured.
+_restic_secondary_enabled: "{{ (restic_secondary_repository | default('')) | length > 0 }}"
+
 # The list of scheduled jobs deployed by the role. Each entry is rendered
 # as a {script, .service, .timer} triple by schedule_systemd.yml and as a
 # cron line by schedule_cron.yml.
-_restic_jobs:
+#
+# Per-entry keys:
+#   script     - filename of the deployed script (and the .service ExecStart)
+#   template   - source template to render (defaults to `script`); lets several
+#                jobs reuse one template rendered to distinct filenames
+#   env_file   - env file the script/unit loads (defaults to `env`); the
+#                secondary jobs load `env.secondary` to target the secondary repo
+#   repository - repo path the job operates on (used by the mountpoint guard)
+#   require_mountpoint - when true, the job refuses to run unless `repository`
+#                is a mountpoint (guards against writing to local disk)
+_restic_base_jobs:
   - name: backup
     description: "Restic backup"
     script: restic-backup.sh
@@ -43,3 +61,55 @@ _restic_jobs:
     script: restic-check-data.sh
     systemd_schedule: "{{ restic_check_data_schedule }}"
     cron: "{{ restic_check_data_cron }}"
+
+# Jobs added only when a secondary repository is configured. The copy job is
+# unique; the rest reuse the primary forget/prune/check templates rendered to
+# distinct filenames against env.secondary, so retention and check settings
+# stay identical to the primary with no second source of truth.
+_restic_secondary_jobs:
+  - name: copy
+    description: "Restic copy (replicate primary -> secondary)"
+    script: restic-copy.sh
+    env_file: env.secondary
+    repository: "{{ restic_secondary_repository }}"
+    require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    systemd_schedule: "{{ restic_secondary_copy_schedule }}"
+    cron: "{{ restic_secondary_copy_cron }}"
+  - name: forget-secondary
+    description: "Restic forget on secondary (apply retention policy)"
+    script: restic-forget-secondary.sh
+    template: restic-forget.sh
+    env_file: env.secondary
+    repository: "{{ restic_secondary_repository }}"
+    require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    systemd_schedule: "{{ restic_secondary_forget_schedule }}"
+    cron: "{{ restic_secondary_forget_cron }}"
+  - name: prune-secondary
+    description: "Restic prune on secondary (reclaim space)"
+    script: restic-prune-secondary.sh
+    template: restic-prune.sh
+    env_file: env.secondary
+    repository: "{{ restic_secondary_repository }}"
+    require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    systemd_schedule: "{{ restic_secondary_prune_schedule }}"
+    cron: "{{ restic_secondary_prune_cron }}"
+  - name: check-secondary
+    description: "Restic check on secondary (metadata)"
+    script: restic-check-secondary.sh
+    template: restic-check.sh
+    env_file: env.secondary
+    repository: "{{ restic_secondary_repository }}"
+    require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    systemd_schedule: "{{ restic_secondary_check_schedule }}"
+    cron: "{{ restic_secondary_check_cron }}"
+  - name: check-data-secondary
+    description: "Restic check on secondary (read subset of pack data)"
+    script: restic-check-data-secondary.sh
+    template: restic-check-data.sh
+    env_file: env.secondary
+    repository: "{{ restic_secondary_repository }}"
+    require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    systemd_schedule: "{{ restic_secondary_check_data_schedule }}"
+    cron: "{{ restic_secondary_check_data_cron }}"
+
+_restic_jobs: "{{ _restic_base_jobs + (_restic_secondary_jobs if (_restic_secondary_enabled | bool) else []) }}"

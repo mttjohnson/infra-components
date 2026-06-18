@@ -1,0 +1,25 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+set -euo pipefail
+
+# env.secondary sets RESTIC_REPOSITORY (the copy DESTINATION) and its
+# password file, plus any backend creds.
+set -a
+. {{ restic_config_dir }}/{{ item.env_file | default('env') }}
+set +a
+
+{% include '_mountpoint_guard.sh.j2' %}
+# Source side is the primary repo. restic uses separate env vars for the
+# --from repository; even when both repos share one password, the source
+# password file must be set explicitly or restic prompts and the job hangs.
+export RESTIC_FROM_REPOSITORY={{ restic_repository }}
+export RESTIC_FROM_PASSWORD_FILE={{ restic_password_file }}
+
+args=()
+{% for arg in restic_secondary_copy_extra_args %}
+args+=( {{ arg }} )
+{% endfor %}
+
+# Copies every snapshot from the primary not already present in the secondary
+# (deduplicated; --copy-chunker-params at init time keeps chunking identical).
+exec {{ restic_binary_install_dir }}/restic copy "${args[@]}"

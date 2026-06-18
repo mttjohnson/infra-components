@@ -1,0 +1,9 @@
+{% if (item.require_mountpoint | default(false) | bool) and (item.repository | default('')).startswith('/') %}
+# Refuse to operate when the backing mount is absent. Without this, restic
+# would silently read/write the repository on the instance's local disk,
+# defeating the off-box copy. Disable via restic_secondary_require_mountpoint.
+if ! mountpoint -q {{ item.repository | quote }}; then
+  echo "ERROR: {{ item.repository }} is not a mountpoint; refusing to run against local disk" >&2
+  exit 1
+fi
+{% endif %}

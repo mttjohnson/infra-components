@@ -87,6 +87,57 @@ restic_failure_command: "curl -fsS --retry 3 https://hc-ping.com/<uuid>/fail"
 
 Not wired up in cron mode (cron has no equivalent of `OnFailure=`).
 
+### Secondary repository (off-box copy)
+
+Maintain a second, independent repository kept in sync with the primary via
+`restic copy` — e.g. replicate a local-disk primary to an NFS-backed NAS so a
+copy survives loss of the host's disk. Disabled by default; set
+`restic_secondary_repository` to enable.
+
+```yaml
+restic_repository: /data/backups          # primary (local disk)
+restic_secondary_repository: /backups      # secondary (e.g. NFS mount)
+```
+
+When enabled the role:
+
+- Initializes the secondary on first detection with
+  `restic init --copy-chunker-params --from-repo <primary>` so deduplication
+  parameters match and copies stay efficient. Existing deployments pick the
+  secondary up automatically the next time the role runs.
+- Deploys a `restic-copy` job (primary → secondary) plus
+  `restic-{forget,prune,check,check-data}-secondary` jobs, so the copy gets the
+  same retention policy and integrity verification as the primary. The
+  secondary jobs reuse the primary job templates against a second env file
+  (`env.secondary`), so there is no second source of truth for retention/check
+  settings.
+- By default **shares the primary password** (`restic_secondary_password_file`
+  defaults to `restic_password_file`); the copy job passes it explicitly as
+  `--from-password-file` so a shared password never triggers an interactive
+  prompt.
+
+The **primary stays the canonical `RESTIC_REPOSITORY`** for ad-hoc operator
+commands and the `restic_restore` role. To operate on the secondary, source
+`env.secondary` (documented in the rendered BACKUPS.md). Both repos are
+independent and restorable on their own.
+
+#### NFS all_squash and the mountpoint guard
+
+If the secondary is an NFS export that squashes all users to one identity,
+every repository file on it will be owned by that identity and `chown` is
+rejected. This is fine: restic does not rely on repository file ownership, and
+the data is encrypted, so confidentiality comes from the password (which never
+leaves the host's local disk), not filesystem permissions. Accordingly the role
+does **not** enforce owner/group/mode on the secondary directory
+(`restic_manage_secondary_repository_dir` defaults to `false`; the ownership
+vars default to unset).
+
+Because an unmounted NFS path would silently leave the "off-box" copy on the
+instance's local disk, the role refuses to initialize — and the scheduled
+secondary jobs refuse to run — unless the secondary path is a mountpoint. Set
+`restic_secondary_require_mountpoint: false` for secondaries that are not local
+mounts (e.g. an `s3:`/`b2:`/`rclone:` URL).
+
 ## Variables
 
 ### Installation
@@ -250,6 +301,36 @@ schedules above. See `defaults/main.yml`.
 |---|---|---|
 | `restic_failure_command` | `""` | Shell command run by the OnFailure unit when a scheduled job fails (systemd mode only) |
 
+### Secondary repository
+
+| Variable | Default | Description |
+|---|---|---|
+| `restic_secondary_repository` | `""` | Secondary repository URL/path. Empty disables the whole feature. |
+| `restic_secondary_password_file` | `{{ restic_password_file }}` | Password file for the secondary (defaults to sharing the primary password) |
+| `restic_manage_secondary_repository_dir` | `false` | Create the secondary directory on the host (rarely needed — the mount usually exists and `restic init` populates it) |
+| `restic_secondary_repository_owner` | _(unset)_ | Owner for the secondary directory; unset so an all_squash export isn't fought |
+| `restic_secondary_repository_group` | _(unset)_ | Group for the secondary directory; unset by default |
+| `restic_secondary_repository_mode` | _(unset)_ | Mode for the secondary directory; unset by default |
+| `restic_secondary_require_mountpoint` | `true` | Refuse to init / run secondary jobs unless the secondary path is a mountpoint (guards against writing to local disk) |
+| `restic_secondary_copy_extra_args` | `[]` | Extra args appended to `restic copy` (e.g. `--tag`/`--host` filters) |
+
+#### Secondary systemd schedules (OnCalendar)
+
+| Variable | Default |
+|---|---|
+| `restic_secondary_copy_schedule` | `*-*-* 03:00:00` |
+| `restic_secondary_forget_schedule` | `*-*-* 03:45:00` |
+| `restic_secondary_prune_schedule` | `Sun *-*-* 04:30:00` |
+| `restic_secondary_check_schedule` | `Sat *-*-* 05:30:00` |
+| `restic_secondary_check_data_schedule` | `Sun *-*-01..07 06:30:00` |
+
+#### Secondary cron schedules
+
+Each is a `{minute, hour, day, month, weekday}` dict mirroring the systemd
+schedules above: `restic_secondary_copy_cron`, `restic_secondary_forget_cron`,
+`restic_secondary_prune_cron`, `restic_secondary_check_cron`,
+`restic_secondary_check_data_cron`. See `defaults/main.yml`.
+
 ## What gets installed
 
 - **Binary**: `restic` in `/usr/local/bin/`
@@ -258,10 +339,15 @@ schedules above. See `defaults/main.yml`.
   - `password` — generated repository password (mode `0600`)
   - `excludes` — exclude patterns (only when `restic_backup_excludes` is non-empty)
   - `restic-backup.sh`, `restic-forget.sh`, `restic-prune.sh`, `restic-check.sh`, `restic-check-data.sh`
+  - when a secondary repository is configured: `env.secondary`, `restic-copy.sh`,
+    and `restic-{forget,prune,check,check-data}-secondary.sh`
 - **Logs (cron mode only)**: `/var/log/restic/<job>.log`
-- **Repository**: initialized via `restic init` on first run
+- **Repository**: initialized via `restic init` on first run (secondary, when
+  configured, via `restic init --copy-chunker-params --from-repo <primary>`)
 - **Schedule**:
   - systemd: `restic-{backup,forget,prune,check,check-data}.{service,timer}` in `/etc/systemd/system/`
+    (plus `restic-{copy,forget-secondary,prune-secondary,check-secondary,check-data-secondary}.{service,timer}`
+    when a secondary repository is configured)
   - cron: `/etc/cron.d/restic`
 
 ## Operator runbook (BACKUPS.md)

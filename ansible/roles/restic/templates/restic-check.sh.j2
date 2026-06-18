@@ -3,9 +3,10 @@
 set -euo pipefail
 
 set -a
-. {{ restic_config_dir }}/env
+. {{ restic_config_dir }}/{{ item.env_file | default('env') }}
 set +a
 
+{% include '_mountpoint_guard.sh.j2' %}
 # Metadata-only check (fast). The companion restic-check-data job
 # additionally reads a subset of pack data to catch on-disk corruption.
 exec {{ restic_binary_install_dir }}/restic check {{ restic_check_extra_args | join(' ') }}
