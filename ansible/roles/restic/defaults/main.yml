@@ -185,6 +185,11 @@ restic_check_data_cron: {minute: "0", hour: "6", day: "1-7", month: "*", weekday
 # on every apply so it never drifts from the live configuration.
 restic_deploy_backups_md: true
 restic_backups_md_path: /root/BACKUPS.md
+# Where the rendered BACKUPS.md points operators for the full guide
+# (restore strategy, secondary-repo internals, troubleshooting prose).
+# The on-host file is deliberately a terse copy-paste reference; the
+# long-form explanations live in the role README.
+restic_readme_url: https://github.com/mttjohnson/infra-components/blob/main/ansible/roles/restic/README.md
 
 # ----- Failure notification -----
 # Shell command run by the OnFailure= unit when a scheduled restic job

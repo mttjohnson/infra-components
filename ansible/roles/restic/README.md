@@ -357,24 +357,134 @@ The role renders a host-tailored quick reference into `/root/BACKUPS.md`
 `restic_deploy_backups_md`, default `true`). It is refreshed on every
 apply so it never drifts from the live configuration.
 
-The runbook covers the operations an operator actually needs in the
-moment — with the host's real repository URL, paths, schedules, and
-retention numbers baked in instead of placeholder examples:
+The on-host file is intentionally a **terse copy-paste reference** — it
+assumes whoever opens it in a terminal is mid-incident and wants a command,
+not a tutorial. It carries only the host's real repository URL, paths,
+schedules, and retention numbers plus the one-liners to check status, verify,
+and restore, and it links back to this README (`restic_readme_url`) for the
+long-form material below.
 
-- Sourcing `/etc/restic/env` so plain `restic` commands work
-- Listing scheduled timers / cron entries and tailing recent logs
-- Triggering an ad-hoc backup
-- Inspecting snapshots (`snapshots`, `ls`, `find`, `diff`, `stats`)
-- Verifying integrity (`check`, `check --read-data-subset`)
-- **Restoring** — always starting with `restic restore ... --dry-run --verbose=2`
-  for a preview, then a sandboxed restore to a fresh directory, with
-  recipes for single-file restores, streaming `dump`, and fuse mount
-- A one-shot end-to-end test-restore recipe so operators can routinely
-  prove the backups actually work, not just that they ran
-- Previewing the retention policy (`restic forget --dry-run`) before
-  the scheduled forget job deletes anything
-- Troubleshooting stale locks and lost-password recovery
-- A "where things live" path reference for the host
+This section is that long form: the same operations with the explanation the
+on-host file omits. Every command assumes `/etc/restic/env` is sourced first
+(`set -a; . /etc/restic/env; set +a`) so plain `restic` works.
+
+### Inspect what got backed up
+
+```bash
+restic snapshots                       # all snapshots
+restic snapshots --latest 3            # three most recent
+restic snapshots --host <hostname>     # filter to one host (multi-host repos)
+restic stats latest                    # size & file count of the latest snapshot
+restic stats --mode raw-data           # raw repo size
+
+restic ls latest                       # full file tree in latest snapshot
+restic ls --long latest /etc           # one subtree, with sizes / mtimes
+restic find PATTERN                    # search snapshots by filename
+restic diff <old-id> <new-id>          # what changed between two snapshots
+```
+
+Snapshot IDs are the short hex strings from `restic snapshots`; the literal
+word `latest` always aliases the newest snapshot.
+
+### Verify integrity
+
+```bash
+restic check                              # fast — metadata only
+restic check --read-data-subset=10%       # slower — catches on-disk bit-rot
+```
+
+The role already runs the metadata check on the `restic-check` schedule and the
+data-subset check on `restic-check-data`. Ad-hoc runs matter most **after** a
+suspected hardware issue or **before** relying on a snapshot to recover
+something important.
+
+### Restore
+
+Always preview first — it prints exactly which files would be written, and
+where, with no changes to disk:
+
+```bash
+restic restore latest --target /tmp/restore-preview --dry-run --verbose=2
+```
+
+Narrow with `--include /path/under/snapshot` or `--exclude PATTERN`. Then
+restore into a **fresh** directory (never on top of live data), inspect, and
+copy out only what you need:
+
+```bash
+restic restore latest --target /var/restore                          # whole snapshot
+restic restore latest --target /var/restore --include /etc/file.conf # lands at /var/restore/etc/file.conf
+restic restore <snapshot-id> --target /var/restore                   # a specific, non-latest snapshot
+restic dump latest /etc/file.conf > /tmp/file.conf                   # stream one file, no temp tree
+```
+
+Browse the repo like a filesystem (read-only):
+
+```bash
+apt-get install -y fuse                            # if not already present
+mkdir -p /mnt/restic && restic mount /mnt/restic & # mounts /mnt/restic/snapshots/
+ls /mnt/restic/snapshots/latest/
+fusermount -u /mnt/restic                          # when done
+```
+
+### Prove a restore actually works (run periodically)
+
+A backup that has never been restored might not work. This round-trip touches
+no live files; vary the file each time to exercise more of the restore path:
+
+```bash
+TMP=$(mktemp -d /tmp/restic-test.XXXXXX)
+restic restore latest --target "$TMP" --include /etc/hostname
+diff /etc/hostname "$TMP/etc/hostname" && echo "RESTORE OK"
+rm -rf "$TMP"
+```
+
+### Preview retention before it deletes anything
+
+The scheduled `restic-forget` job applies the retention policy. To see what it
+*would* remove without doing it:
+
+```bash
+restic forget --dry-run \
+  --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --keep-yearly 3
+```
+
+(Substitute the host's actual `restic_keep_*` values — the rendered BACKUPS.md
+bakes them in.)
+
+### Operating the secondary repository
+
+When a secondary is configured, every command above works against it once you
+source its env file instead of the primary's:
+
+```bash
+set -a; . /etc/restic/env.secondary; set +a   # now `restic snapshots` lists the SECONDARY
+```
+
+The two repos are fully independent — each has its own index and is restorable
+on its own. The `restic-copy` job replicates primary → secondary on schedule,
+and the secondary gets matching forget / prune / check jobs. See
+[Secondary repository](#secondary-repository-off-box-copy) for the NFS
+all-squash ownership behaviour and the mountpoint guard.
+
+### Troubleshooting
+
+**`repository is already locked`** — a previous restic process left a stale
+lock (reboot mid-run, SIGKILL). Confirm nothing live is holding it, then clear:
+
+```bash
+systemctl list-units 'restic-*' --state=running    # systemd mode: should be empty
+restic list locks
+restic unlock                                       # only if no live process
+```
+
+**`Fatal: wrong password ...`** — confirm the password file is intact
+(`sha256sum /etc/restic/password`). If the password is lost the repository is
+**unrecoverable** — there is no maintainer backdoor by design. Enable
+`restic_fetch_password_to_control` (above) so a copy lands on the control node.
+
+**See exactly what the scheduled jobs run** — the job scripts are plain bash and
+safe to read: `cat /etc/restic/restic-backup.sh`.
 
 Authoritative restic documentation: https://restic.readthedocs.io/
 
@@ -382,6 +492,7 @@ Authoritative restic documentation: https://restic.readthedocs.io/
 |---|---|---|
 | `restic_deploy_backups_md` | `true` | Render BACKUPS.md to root's home |
 | `restic_backups_md_path` | `/root/BACKUPS.md` | Where to place the runbook (mode 0600 root) |
+| `restic_readme_url` | _(this README on GitHub)_ | URL the rendered BACKUPS.md links to for the full guide |
 
 ## Check mode
 
