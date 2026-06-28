@@ -9,6 +9,7 @@ set -a
 set +a
 
 {% include '_mountpoint_guard.sh.j2' %}
+{% include '_blessed_guard.sh.j2' %}
 # Source side is the primary repo. restic uses separate env vars for the
 # --from repository; even when both repos share one password, the source
 # password file must be set explicitly or restic prompts and the job hangs.

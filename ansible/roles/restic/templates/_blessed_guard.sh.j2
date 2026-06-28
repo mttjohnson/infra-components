@@ -1,0 +1,11 @@
+{% if (item.blessed_gate | default(false) | bool) %}
+# Refuse to run unless the host has been "blessed" (recorded as a known-good
+# backup state) by the restic_restore role. This is fail-closed: a missing
+# marker stops state-changing jobs (backup/copy/forget/prune) so a rebuild that
+# could not restore neither writes polluting backups nor lets retention erode
+# the surviving snapshots while the situation is unresolved. See RECOVERY.md.
+if [ ! -f {{ restic_blessed_marker_path | quote }} ]; then
+  echo "ERROR: {{ restic_blessed_marker_path }} absent — host is not blessed for backups; refusing to run (unresolved rebuild/recovery?)" >&2
+  exit 1
+fi
+{% endif %}

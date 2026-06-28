@@ -139,6 +139,27 @@ restic_control_password_file: "{{ restic_control_dir }}/{{ restic_control_state_
 # behaviour.
 restic_seed_password_from_control: true
 
+# ----- Recovery safety (see RECOVERY.md) -----
+# "Blessed" marker path. The state-changing scheduled jobs (backup, copy,
+# forget, prune) refuse to run unless this file exists. It is written by the
+# restic_restore role only when the host is in a known-good backup state
+# (genuine first deploy, or a confirmed recovery) and removed otherwise. This
+# is fail-closed: a rebuild that cannot restore neither creates polluting
+# backups nor lets retention erode the surviving snapshots until the situation
+# is resolved. Read-only check jobs are not gated. If you override the path,
+# set it in group_vars so the restic_restore role agrees (its
+# restic_restore_blessed_marker_path must match).
+restic_blessed_marker_path: "{{ restic_config_dir }}/blessed"
+
+# Operator override: proceed as a fresh deployment even though recovery signals
+# (an existing key or repository) are present. Bypasses the recovery-miss
+# failure and lets the host be blessed without a restore. Guarded against
+# fat-fingering onto the wrong host: it only takes effect when its value EQUALS
+# the target inventory_hostname. It does NOT bypass the "a repository exists but
+# no password is available" hard stop, and it does NOT re-key. Leave empty to
+# keep all recovery protections active.
+restic_force_fresh_start: ""
+
 # ----- Backend credentials / environment -----
 # Extra environment variables placed in /etc/restic/env. Use this for
 # backend credentials (AWS_ACCESS_KEY_ID, B2_ACCOUNT_ID, etc.) or for

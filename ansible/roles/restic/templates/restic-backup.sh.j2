@@ -6,6 +6,8 @@ set -a
 . {{ restic_config_dir }}/env
 set +a
 
+{% include '_mountpoint_guard.sh.j2' %}
+{% include '_blessed_guard.sh.j2' %}
 args=()
 {% for tag in restic_backup_tags %}
 args+=( --tag {{ tag | quote }} )

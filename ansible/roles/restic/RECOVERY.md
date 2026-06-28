@@ -219,11 +219,22 @@ implementation configuration so they survive a control-node rebuild via the repo
 This document is the **target design**. It is being implemented in stages, each validated
 under `--check`:
 
-1. Password seed from control + write-once (anti-clobber) fetch + control-dir rename.
-2. Password-independent repo/sentinel detection + recovery decision gate + fail-closed
-   marker across the state-changing jobs.
-3. Multi-source restore + path-presence / population verification + `restore_required`
-   enforcement conditioned on `recovery_expected`.
-4. Repo-identity pinning + volume sentinel write/verify + asymmetric retention + overrides.
+1. ✅ **Done.** Password seed from control + write-once (anti-clobber) fetch + control-dir
+   rename (`restic-passwords/` → flat `restic-state/`).
+2. ✅ **Done.** Password-independent repository `config` detection + recovery decision gate
+   (fail-early when a repo exists but no key) + the fail-closed blessed marker across the
+   state-changing jobs + the primary mountpoint guard + `restic_force_fresh_start`. The
+   blessed marker is owned by `restic_restore`, which writes it on a confirmed recovery /
+   first deploy and removes it (locking out backups + retention) on a recovery miss, with
+   `restore_required` enforcement conditioned on `recovery_expected`.
+3. ⏳ Multi-source restore (local vs off-box, newest wins) + path-presence / population
+   verification of restored bundles.
+4. ⏳ Repo-identity pinning + volume sentinel write/verify + asymmetric retention +
+   `restic_allow_new_password` re-key (with control-key archival).
+
+> Until stage 4 lands, the **volume sentinel** and **repo-identity pin** signals described
+> above are part of the target design but not yet written, so the "data volume swapped
+> while the root filesystem is intact" gap is not yet closed. Stages 1–2 close the main
+> rebuild path (host and/or control-node rebuild) and the retention-erosion window.
 
 See each role's `README.md` for the per-variable reference.

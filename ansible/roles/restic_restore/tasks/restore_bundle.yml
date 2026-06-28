@@ -189,23 +189,24 @@
       targets_populated: {{ _restic_restore_targets_populated }}
       action:            {{ _restic_restore_plan_action }}
 
-# ----- No-snapshot handling (real runs) -----
+# ----- No-snapshot handling -----
+#
+# A recovery-critical bundle (restore_required: true) that is neither already
+# populated nor resolvable to a snapshot is "unsatisfied". We DON'T fail here —
+# enforcement is centralized in main.yml after the loop, conditioned on
+# recovery_expected, so the blessed marker can be removed before the play aborts
+# and so a genuine first deploy (no recovery expected) converges fresh instead
+# of failing on a bundle that was never backed up. See RECOVERY.md.
 
-- name: Fail when no snapshot matches and restore_required is true
-  ansible.builtin.fail:
-    msg: |
-      No restic snapshot matches the selector for bundle '{{ _restic_restore_bundle.name }}'.
-      Selector: tags={{ _restic_restore_bundle.snapshot_selector.tags | default([]) }}
-                host={{ _restic_restore_bundle.snapshot_selector.host | default('(any)') }}
-                paths={{ _restic_restore_selector_paths }}
-      restore_required=true.
-  when:
-    - _restic_restore_gate_ok | bool
-    - _restic_restore_repo_ok | bool
-    - not (_restic_restore_targets_populated | bool)
-    - not (_restic_restore_snapshot_resolved | bool)
-    - _restic_restore_bundle.restore_required | default(false) | bool
-    - not ansible_check_mode
+- name: Track recovery-critical bundles that cannot be satisfied
+  ansible.builtin.set_fact:
+    _restic_restore_unsatisfied_critical: >-
+      {{ _restic_restore_unsatisfied_critical
+         + ([_restic_restore_bundle.name]
+            if ((_restic_restore_bundle.restore_required | default(false) | bool)
+                and not (_restic_restore_targets_populated | bool)
+                and not (_restic_restore_snapshot_resolved | bool))
+            else []) }}
 
 # ============================================================================
 # Everything below only runs when we have a snapshot AND the targets aren't

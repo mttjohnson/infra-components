@@ -7,4 +7,5 @@ set -a
 set +a
 
 {% include '_mountpoint_guard.sh.j2' %}
+{% include '_blessed_guard.sh.j2' %}
 exec {{ restic_binary_install_dir }}/restic prune

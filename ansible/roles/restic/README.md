@@ -250,6 +250,31 @@ When restic publishes a new signing key:
 > (and replicate the control-node copy off-host) — it is also what lets the role
 > reseed and recover a rebuilt host. See [RECOVERY.md](RECOVERY.md).
 
+### Recovery safety
+
+The role and its companion `restic_restore` cooperate to ensure a rebuild can
+never silently turn into a fresh start that loses data. The full design is in
+[RECOVERY.md](RECOVERY.md); the short version:
+
+- **Fail-early when a repository exists but no password is available.** A restic
+  repository's `config` is detectable without the password, so the role refuses
+  to generate a new key or initialize over an existing repository when no key
+  (host or control node) can read it — recover the control-node key and re-run.
+- **Fail-closed blessed marker.** The state-changing jobs (backup / copy /
+  forget / prune) refuse to run unless `restic_blessed_marker_path` exists. The
+  `restic_restore` role writes it only when the host is in a known-good state
+  and removes it otherwise, so a failed recovery locks out both new backups and
+  retention until resolved.
+- **`restic_force_fresh_start`** — operator override to proceed as a fresh
+  deployment despite recovery signals. Takes effect only when it equals the
+  target `inventory_hostname`; does not bypass the "repository exists but no
+  key" stop and does not re-key.
+
+| Variable | Default | Description |
+|---|---|---|
+| `restic_blessed_marker_path` | `{{ restic_config_dir }}/blessed` | Fail-closed gate marker the state-changing jobs require; written/removed by `restic_restore` (its `restic_restore_blessed_marker_path` must match) |
+| `restic_force_fresh_start` | `""` | Set to the target `inventory_hostname` to proceed fresh despite recovery signals |
+
 ### Backend credentials / environment
 
 | Variable | Default | Description |

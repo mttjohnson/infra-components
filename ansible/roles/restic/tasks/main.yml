@@ -192,6 +192,77 @@
   delegate_to: localhost
   become: false
 
+# ----- Recovery signals (password-independent; see RECOVERY.md) -----
+# A restic repository's structure (the `config` file) is visible without the
+# password, so these stats detect an existing repository even when no key is
+# available — the worst-case rebuild where the control-node key was also lost.
+
+- name: Probe whether the primary repository already exists
+  ansible.builtin.stat:
+    path: "{{ restic_repository }}/config"
+  register: _restic_primary_config_stat
+  when: restic_repository.startswith('/')
+
+- name: Probe whether the secondary repository already exists
+  ansible.builtin.stat:
+    path: "{{ restic_secondary_repository }}/config"
+  register: _restic_secondary_config_stat
+  when:
+    - _restic_secondary_enabled | bool
+    - restic_secondary_repository.startswith('/')
+
+- name: Compute recovery signals
+  ansible.builtin.set_fact:
+    restic_host_password_present: "{{ _restic_password_file_stat.stat.exists | bool }}"
+    restic_control_password_present: "{{ _restic_control_password_stat.stat.exists | bool }}"
+    restic_primary_repo_exists: "{{ (_restic_primary_config_stat.stat.exists | default(false)) | bool }}"
+    restic_secondary_repo_exists: "{{ (_restic_secondary_config_stat.stat.exists | default(false)) | bool }}"
+    restic_fresh_start_active: >-
+      {{ ((restic_force_fresh_start | default('')) | length > 0)
+         and ((restic_force_fresh_start | default('')) == inventory_hostname) }}
+
+- name: Compute recovery_expected
+  ansible.builtin.set_fact:
+    # Any one of these indicates a prior backup was established for this host.
+    restic_recovery_expected: >-
+      {{ restic_host_password_present or restic_control_password_present
+         or restic_primary_repo_exists or restic_secondary_repo_exists }}
+    # A usable key exists if the host has one or the control node holds a copy.
+    restic_have_usable_key: "{{ restic_host_password_present or restic_control_password_present }}"
+
+# Fail-early hard stop: an initialized repository exists but no password is
+# available to read it. Generating a new key here would orphan the existing
+# backups, and `restic init` would refuse over an existing config. Not bypassed
+# by restic_force_fresh_start — the operator must recover the key (or remove the
+# repositories) deliberately.
+- name: Fail early when a repository exists but no password is available (real run)
+  ansible.builtin.fail:
+    msg: |
+      An initialized restic repository exists but no password is available to read it:
+        host key   {{ restic_password_file }}: {{ 'present' if restic_host_password_present else 'MISSING' }}
+        control key {{ restic_control_password_file }}: {{ 'present' if restic_control_password_present else 'MISSING' }}
+        primary repo {{ restic_repository }}: {{ 'present' if restic_primary_repo_exists else 'absent' }}
+        secondary repo {{ restic_secondary_repository | default('(none)') }}: {{ 'present' if restic_secondary_repo_exists else 'absent' }}
+      Refusing to generate a new password or initialize over the existing repository —
+      that would orphan the existing backups. Recover the control-node password copy
+      from your off-host secret store into {{ restic_control_dir }}/ and re-run.
+  when:
+    - restic_primary_repo_exists or restic_secondary_repo_exists
+    - not restic_have_usable_key
+    - not ansible_check_mode
+
+- name: Warn when a repository exists but no password is available (check mode)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: a real run WOULD FAIL here — an initialized restic repository exists
+      (primary={{ restic_primary_repo_exists }}, secondary={{ restic_secondary_repo_exists }})
+      but no password is available (host={{ restic_host_password_present }},
+      control={{ restic_control_password_present }}). Recover the control-node key and re-run.
+  when:
+    - restic_primary_repo_exists or restic_secondary_repo_exists
+    - not restic_have_usable_key
+    - ansible_check_mode
+
 - name: Compute password-establishment plan
   ansible.builtin.set_fact:
     # Reseed from control when the host has none and a control copy exists.

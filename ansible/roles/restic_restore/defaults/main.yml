@@ -9,6 +9,22 @@
 restic_restore_binary_path: /usr/local/bin/restic
 restic_restore_env_file: /etc/restic/env
 
+# ----- Blessed marker (fail-closed backup gate; see RECOVERY.md) -----
+# This role is the sole authority for the "blessed" marker the restic role's
+# state-changing jobs gate on. It writes the marker when the host is in a
+# known-good backup state (genuine first deploy, or a confirmed recovery) and
+# removes it otherwise, so a rebuild that could not restore its recovery-critical
+# bundles cannot create polluting backups or let retention erode surviving
+# snapshots. The path MUST match the restic role's restic_blessed_marker_path.
+restic_restore_blessed_marker_path: /etc/restic/blessed
+restic_restore_blessed_marker_mode: "0640"
+
+# recovery_expected is computed by the restic role and shared via set_fact. When
+# this role runs standalone (without the restic role having run in the same
+# play) the signal is absent; default false so a standalone run does not enforce
+# recovery. Run the full play for recovery enforcement.
+restic_restore_recovery_expected_default: false
+
 # ----- Repository reachability -----
 # When false (default), an unreachable repo (e.g. /data not mounted, network
 # backend down) is reported as a warning and all bundles are skipped. The

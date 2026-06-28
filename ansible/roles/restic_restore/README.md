@@ -68,14 +68,40 @@ bytes on disk.
 | --------------------------------------- | ----------------- | ---- |
 | Restic binary or env file missing       | **Fail**          | (none — always fails in a real run) |
 | Repository unreachable (mount/network)  | **Skip all bundles, warn** | `restic_restore_fail_on_missing_repo: true` to fail |
-| No snapshot matches a bundle's selector | **Skip that bundle, warn** | Per-bundle `restore_required: true` to fail |
+| No snapshot matches a non-critical bundle | **Skip that bundle, warn** | Per-bundle `restore_required: true` to make it recovery-critical |
+| No snapshot for a `restore_required` bundle, **recovery expected** | **Fail; host not blessed** | `restic_force_fresh_start=<hostname>` to start fresh |
+| No snapshot for a `restore_required` bundle, **first deploy** | **Skip; converge fresh** | (recovery not expected — nothing to restore) |
 | Restic exits non-zero during restore    | **Fail**          | (none — always fails loudly) |
 | Permission error writing target / chmod / chown | **Fail**  | (none — always fails loudly) |
 
-The two skip-by-default flags make the permissive case the default: restore
-if available, continue if not. Set them to fail where proceeding without
-restored data is wrong — e.g. a primary database whose absence means the
-whole service is meaningless.
+The skip-by-default flags make the permissive case the default: restore if
+available, continue if not. `restore_required: true` marks a bundle
+**recovery-critical** — its failure is conditioned on `recovery_expected` (see
+below), so it is safe to set even on a fresh install.
+
+## Recovery enforcement & blessed marker
+
+This role is the sole authority for the **blessed marker**
+(`restic_restore_blessed_marker_path`, default `/etc/restic/blessed`) that the
+`restic` role's state-changing jobs (backup / copy / forget / prune) gate on.
+The full cross-role design is in the [`restic` role's RECOVERY.md](../restic/RECOVERY.md).
+
+`recovery_expected` is computed by the `restic` role (any of: a host or
+control-node password, or an existing primary/secondary repository) and shared
+via a host fact. After the bundle loop this role:
+
+- **Writes the marker** when the host is in a known-good state — a genuine first
+  deploy (`recovery_expected = false`), a confirmed recovery (every
+  `restore_required` bundle restored or already populated), or an explicit
+  `restic_force_fresh_start=<inventory_hostname>` override.
+- **Removes the marker and fails loudly** when recovery is expected but one or
+  more `restore_required` bundles have no matching snapshot. The marker is
+  removed *before* the failure, so backups and retention stay locked
+  (fail-closed) until the situation is resolved — preventing both polluting
+  backups and retention eroding the surviving snapshots.
+
+Under `--check` the failure is downgraded to a "would fail" warning, and the
+bless/remove decision is still shown.
 
 ## Check mode
 
@@ -159,6 +185,9 @@ When in doubt, set `snapshot_selector.paths` explicitly and verify with
 | `restic_restore_env_file`             | `/etc/restic/env`              | Env file sourced before each restic invocation |
 | `restic_restore_fail_on_missing_repo` | `false`                        | Fail the play (vs. warn-and-skip) when the repo probe is non-zero |
 | `restic_restore_marker_dir`           | `/var/lib/restic_restore`      | Where per-bundle diagnostic markers are written |
+| `restic_restore_blessed_marker_path`  | `/etc/restic/blessed`          | Fail-closed gate marker written/removed by this role; MUST match the `restic` role's `restic_blessed_marker_path` |
+| `restic_restore_blessed_marker_mode`  | `0640`                         | Mode for the blessed marker file |
+| `restic_restore_recovery_expected_default` | `false`                   | Value assumed for `recovery_expected` when this role runs standalone (no `restic` role in the play → no enforcement) |
 | `restic_restore_bundles`              | `[]`                           | List of bundles to restore — see below |
 
 ### Bundle schema
@@ -195,10 +224,14 @@ restic_restore_bundles:
   is `<target><path>` — e.g. `target: /restore` + `paths: [/etc/letsencrypt]`
   writes to `/restore/etc/letsencrypt`. The idempotency check inspects the
   effective target paths, not the original paths.
-- **`restore_required`** — default `false`. When `false`, the bundle is
-  skipped (with a warning) if no snapshot matches the selector. When `true`,
-  the play fails. Use `true` for state that has no sensible fresh-system
-  default; leave `false` for state a downstream role can rebuild.
+- **`restore_required`** — default `false`. Marks the bundle
+  **recovery-critical**. Enforcement is conditioned on `recovery_expected`: when
+  recovery is expected (a prior backup exists) and no snapshot matches, the play
+  fails and the host is left unblessed; on a genuine first deploy it is simply
+  skipped (you cannot restore what was never backed up). Set `true` for state
+  that has no sensible fresh-system default; leave `false` for state a
+  downstream role can rebuild. See the [RECOVERY.md](../restic/RECOVERY.md)
+  design.
 - **`owner`, `group`** — recursive ownership enforcement post-restore.
   Either may be set independently; the chown form is `owner:group`,
   `owner`, or `:group` depending on which are defined.
@@ -272,6 +305,7 @@ intervention:
 | Fresh rebuild, `/data` reattached with backups      | Gate ok, probe ok, restore from latest matching snapshot. |
 | Fresh deployment, no `/data` disk yet               | Gate ok, probe fails, all bundles skipped (with `fail_on_missing_repo: false`). |
 | Fresh deployment, `/data` mounted but no backups    | Gate ok, probe ok, no snapshots match, bundle skipped (with `restore_required: false`). |
-| Re-run against converged system                     | Gate ok, probe ok, targets non-empty, bundle skipped via on-disk idempotency. |
+| Re-run against converged system                     | Gate ok, probe ok, targets non-empty, bundle skipped via on-disk idempotency; host (re)blessed. |
 | Check mode against host without restic installed    | Gate failure logged as warning, per-bundle plan summary still emitted. |
-| Bundle the operator wants to enforce strictly       | Per-bundle `restore_required: true` causes failure when no snapshot matches. |
+| Bundle the operator wants to enforce strictly       | Per-bundle `restore_required: true` causes failure when no snapshot matches **and recovery is expected**. |
+| Rebuild, recovery expected, critical bundle has no snapshot | Marker removed, play fails loudly; backups/retention stay locked until resolved (or `restic_force_fresh_start=<hostname>`). |

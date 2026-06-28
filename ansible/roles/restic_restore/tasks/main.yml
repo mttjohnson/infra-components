@@ -122,9 +122,84 @@
 
 # ----- Per-bundle restore loop -----
 
+- name: Initialize recovery aggregation
+  ansible.builtin.set_fact:
+    _restic_restore_unsatisfied_critical: []
+
 - name: Restore bundles
   ansible.builtin.include_tasks: restore_bundle.yml
   loop: "{{ restic_restore_bundles }}"
   loop_control:
     loop_var: _restic_restore_bundle
     label: "{{ _restic_restore_bundle.name | default('<unnamed>') }}"
+
+# ============================================================================
+# Recovery enforcement & blessed marker (see RECOVERY.md).
+#
+# This role is the sole authority for the blessed marker the restic role's
+# state-changing jobs gate on. recovery_expected and fresh-start are computed by
+# the restic role and shared via set_fact; standalone runs default to no
+# enforcement. The marker is written/removed BEFORE the failure below, so a
+# recovery miss removes a stale marker (locking out backups/retention) even
+# though the play then aborts.
+# ============================================================================
+
+- name: Compute recovery enforcement context
+  ansible.builtin.set_fact:
+    _restic_restore_recovery_expected: "{{ restic_recovery_expected | default(restic_restore_recovery_expected_default) | bool }}"
+    _restic_restore_fresh_start: "{{ restic_fresh_start_active | default(false) | bool }}"
+
+- name: Decide whether the host is safe to bless
+  ansible.builtin.set_fact:
+    _restic_restore_safe_to_bless: >-
+      {{ _restic_restore_fresh_start
+         or (not _restic_restore_recovery_expected)
+         or (_restic_restore_unsatisfied_critical | length == 0) }}
+
+- name: Bless host for backups (write blessed marker)
+  ansible.builtin.copy:
+    content: "{{ _restic_restore_bless_record | to_nice_json }}\n"
+    dest: "{{ restic_restore_blessed_marker_path }}"
+    owner: root
+    group: root
+    mode: "{{ restic_restore_blessed_marker_mode }}"
+  vars:
+    _restic_restore_bless_record:
+      blessed_at: "{{ ansible_facts['date_time']['iso8601'] | default('') }}"
+      recovery_expected: "{{ _restic_restore_recovery_expected }}"
+      fresh_start: "{{ _restic_restore_fresh_start }}"
+      unsatisfied_critical: "{{ _restic_restore_unsatisfied_critical }}"
+  when: _restic_restore_safe_to_bless | bool
+
+- name: Remove blessed marker (host not in a known-good backup state)
+  ansible.builtin.file:
+    path: "{{ restic_restore_blessed_marker_path }}"
+    state: absent
+  when: not (_restic_restore_safe_to_bless | bool)
+
+- name: Fail when recovery is expected but recovery-critical bundles were not restored (real run)
+  ansible.builtin.fail:
+    msg: |
+      Recovery was expected for this host, but these recovery-critical bundles could
+      not be restored (no matching snapshot found): {{ _restic_restore_unsatisfied_critical | join(', ') }}.
+      The host has NOT been blessed — backups and retention stay locked to protect the
+      existing snapshots. Investigate the repository / restore source, or, to intentionally
+      start fresh, set restic_force_fresh_start={{ inventory_hostname }}.
+  when:
+    - _restic_restore_recovery_expected | bool
+    - not (_restic_restore_fresh_start | bool)
+    - _restic_restore_unsatisfied_critical | length > 0
+    - not ansible_check_mode
+
+- name: Warn when recovery-critical bundles were not restored (check mode)
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: a real run WOULD FAIL here — recovery expected but these recovery-critical
+      bundles have no matching snapshot: {{ _restic_restore_unsatisfied_critical | join(', ') }}.
+      The host would NOT be blessed (backups/retention locked). Set
+      restic_force_fresh_start={{ inventory_hostname }} to intentionally start fresh.
+  when:
+    - _restic_restore_recovery_expected | bool
+    - not (_restic_restore_fresh_start | bool)
+    - _restic_restore_unsatisfied_critical | length > 0
+    - ansible_check_mode

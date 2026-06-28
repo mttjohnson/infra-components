@@ -35,30 +35,47 @@ _restic_secondary_enabled: "{{ (restic_secondary_repository | default('')) | len
 #   repository - repo path the job operates on (used by the mountpoint guard)
 #   require_mountpoint - when true, the job refuses to run unless `repository`
 #                is a mountpoint (guards against writing to local disk)
+#   blessed_gate - when true, the job refuses to run unless the host has been
+#                blessed by restic_restore (fail-closed). Set on the
+#                state-changing jobs (backup/copy/forget/prune); read-only
+#                check jobs are not gated. See RECOVERY.md.
 _restic_base_jobs:
   - name: backup
     description: "Restic backup"
     script: restic-backup.sh
+    repository: "{{ restic_repository }}"
+    require_mountpoint: "{{ restic_require_mountpoint }}"
+    blessed_gate: true
     systemd_schedule: "{{ restic_backup_schedule }}"
     cron: "{{ restic_backup_cron }}"
   - name: forget
     description: "Restic forget (apply retention policy)"
     script: restic-forget.sh
+    repository: "{{ restic_repository }}"
+    require_mountpoint: "{{ restic_require_mountpoint }}"
+    blessed_gate: true
     systemd_schedule: "{{ restic_forget_schedule }}"
     cron: "{{ restic_forget_cron }}"
   - name: prune
     description: "Restic prune (reclaim space)"
     script: restic-prune.sh
+    repository: "{{ restic_repository }}"
+    require_mountpoint: "{{ restic_require_mountpoint }}"
+    blessed_gate: true
     systemd_schedule: "{{ restic_prune_schedule }}"
     cron: "{{ restic_prune_cron }}"
   - name: check
     description: "Restic check (metadata)"
     script: restic-check.sh
+    repository: "{{ restic_repository }}"
+    require_mountpoint: "{{ restic_require_mountpoint }}"
     systemd_schedule: "{{ restic_check_schedule }}"
     cron: "{{ restic_check_cron }}"
   - name: check-data
     description: "Restic check (read subset of pack data)"
     script: restic-check-data.sh
+    repository: "{{ restic_repository }}"
+    require_mountpoint: "{{ restic_require_mountpoint }}"
     systemd_schedule: "{{ restic_check_data_schedule }}"
     cron: "{{ restic_check_data_cron }}"
 
@@ -73,6 +90,7 @@ _restic_secondary_jobs:
     env_file: env.secondary
     repository: "{{ restic_secondary_repository }}"
     require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    blessed_gate: true
     systemd_schedule: "{{ restic_secondary_copy_schedule }}"
     cron: "{{ restic_secondary_copy_cron }}"
   - name: forget-secondary
@@ -82,6 +100,7 @@ _restic_secondary_jobs:
     env_file: env.secondary
     repository: "{{ restic_secondary_repository }}"
     require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    blessed_gate: true
     systemd_schedule: "{{ restic_secondary_forget_schedule }}"
     cron: "{{ restic_secondary_forget_cron }}"
   - name: prune-secondary
@@ -91,6 +110,7 @@ _restic_secondary_jobs:
     env_file: env.secondary
     repository: "{{ restic_secondary_repository }}"
     require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
+    blessed_gate: true
     systemd_schedule: "{{ restic_secondary_prune_schedule }}"
     cron: "{{ restic_secondary_prune_cron }}"
   - name: check-secondary

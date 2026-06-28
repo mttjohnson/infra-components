@@ -7,6 +7,7 @@ set -a
 set +a
 
 {% include '_mountpoint_guard.sh.j2' %}
+{% include '_blessed_guard.sh.j2' %}
 # forget marks snapshots for deletion according to the retention policy
 # but does not reclaim space; that's the prune job's responsibility.
 exec {{ restic_binary_install_dir }}/restic forget \
