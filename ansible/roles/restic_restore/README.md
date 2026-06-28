@@ -16,13 +16,14 @@ run earlier in the play.
 
 1. The restic binary at `restic_restore_binary_path` (default
    `/usr/local/bin/restic`).
-2. The environment file at `restic_restore_env_file` (default
-   `/etc/restic/env`), containing at minimum `RESTIC_REPOSITORY` and
-   `RESTIC_PASSWORD_FILE`, plus any backend credentials.
+2. At least one source env file from `restic_restore_sources` (by default the
+   primary `/etc/restic/env`, and the secondary `/etc/restic/env.secondary` when
+   present), each containing at minimum `RESTIC_REPOSITORY` and
+   `RESTIC_PASSWORD_FILE` plus any backend credentials.
 
-If either is missing the role fails with a clear message (gate failure).
-There is no flag to make this permissive — if you want to run `restic_restore`,
-the `restic` role must have run first.
+If the binary or *every* source env file is missing the role fails with a clear
+message (gate failure). There is no flag to make this permissive — if you want
+to run `restic_restore`, the `restic` role must have run first.
 
 No repo URL, password, or backend credentials appear in this role's variables.
 Switching the backend is the `restic` role's concern; `restic_restore` is
@@ -148,11 +149,33 @@ For a bundle with multiple `paths`, all must be populated for the skip to
 trigger — if any is empty or missing, the entire bundle is restored
 atomically from one snapshot.
 
+## Multi-source restore
+
+Each bundle is restored from whichever **source** holds the newest matching
+snapshot. `restic_restore_sources` is an ordered list of `{name, env_file}`;
+the default is the primary env plus the secondary env, and any source whose env
+file is absent on the host is dropped (so a host with no secondary just uses the
+primary). For each bundle the role queries every reachable source, then picks
+the snapshot with the newest `time` across all of them — **ties resolve to the
+earlier source** (the primary). Because `restic copy` preserves a snapshot's
+`time`, a steady-state host (both repos hold the same snapshots) restores from
+the local primary, while a rebuilt host whose local repo is gone restores
+automatically from the off-box secondary. No manual env swap is needed.
+
+The per-source queries are skipped for a bundle whose targets are already
+populated, so a converged host doesn't pay the (possibly off-box) query cost.
+
+After an actual restore, the role re-probes the target paths and **fails if any
+is still empty** — catching the case where a declared path is absent from the
+chosen snapshot (`restic restore --include` silently restores nothing for a
+missing path). This is a real-run guard (the restore is skipped under `--check`).
+
 ## Snapshot selection
 
-Each bundle's `snapshot_selector` filters the repo's snapshot list. The role
-picks the most recent matching snapshot (`sort by time | last`), then
-restores the bundle's `paths` from that single snapshot.
+Each bundle's `snapshot_selector` filters each source's snapshot list. Within a
+source the role picks the most recent matching snapshot (`sort by time | last`);
+across sources it then picks the newest (ties → primary), and restores the
+bundle's `paths` from that single snapshot.
 
 Selector subkeys:
 
@@ -182,8 +205,10 @@ When in doubt, set `snapshot_selector.paths` explicitly and verify with
 | Variable                              | Default                        | Description |
 | ------------------------------------- | ------------------------------ | ----------- |
 | `restic_restore_binary_path`          | `/usr/local/bin/restic`        | Path to the restic binary established by the `restic` role |
-| `restic_restore_env_file`             | `/etc/restic/env`              | Env file sourced before each restic invocation |
-| `restic_restore_fail_on_missing_repo` | `false`                        | Fail the play (vs. warn-and-skip) when the repo probe is non-zero |
+| `restic_restore_env_file`             | `/etc/restic/env`              | Primary source env file (also the `primary` entry in `restic_restore_sources`) |
+| `restic_restore_secondary_env_file`   | `/etc/restic/env.secondary`    | Secondary source env file (the `secondary` entry); dropped automatically when absent |
+| `restic_restore_sources`              | `[primary, secondary]`         | Ordered restore sources — each bundle restores from whichever holds the newest matching snapshot (see below) |
+| `restic_restore_fail_on_missing_repo` | `false`                        | Fail the play (vs. warn-and-skip) when **no** source is reachable |
 | `restic_restore_marker_dir`           | `/var/lib/restic_restore`      | Where per-bundle diagnostic markers are written |
 | `restic_restore_blessed_marker_path`  | `/etc/restic/blessed`          | Fail-closed gate marker written/removed by this role; MUST match the `restic` role's `restic_blessed_marker_path` |
 | `restic_restore_blessed_marker_mode`  | `0640`                         | Mode for the blessed marker file |
@@ -302,8 +327,9 @@ intervention:
 
 | Scenario                                            | Behaviour |
 | --------------------------------------------------- | --------- |
-| Fresh rebuild, `/data` reattached with backups      | Gate ok, probe ok, restore from latest matching snapshot. |
-| Fresh deployment, no `/data` disk yet               | Gate ok, probe fails, all bundles skipped (with `fail_on_missing_repo: false`). |
+| Fresh rebuild, `/data` reattached with backups      | Gate ok, probe ok, restore from latest matching snapshot (local primary). |
+| Rebuild, local `/data/backups` gone, NAS intact     | Primary empty/absent, secondary holds the snapshots → restore automatically from the NAS. |
+| Fresh deployment, no source disk yet                | Gate ok, no source reachable, all bundles skipped (with `fail_on_missing_repo: false`). |
 | Fresh deployment, `/data` mounted but no backups    | Gate ok, probe ok, no snapshots match, bundle skipped (with `restore_required: false`). |
 | Re-run against converged system                     | Gate ok, probe ok, targets non-empty, bundle skipped via on-disk idempotency; host (re)blessed. |
 | Check mode against host without restic installed    | Gate failure logged as warning, per-bundle plan summary still emitted. |

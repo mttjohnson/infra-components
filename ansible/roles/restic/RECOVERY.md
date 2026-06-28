@@ -227,8 +227,11 @@ under `--check`:
    blessed marker is owned by `restic_restore`, which writes it on a confirmed recovery /
    first deploy and removes it (locking out backups + retention) on a recovery miss, with
    `restore_required` enforcement conditioned on `recovery_expected`.
-3. ⏳ Multi-source restore (local vs off-box, newest wins) + path-presence / population
-   verification of restored bundles.
+3. ✅ **Done.** Multi-source restore (`restic_restore_sources`: local primary + off-box
+   secondary, newest snapshot wins, ties → primary) so a rebuild whose local repo is gone
+   restores automatically from the off-box copy + post-restore population verification
+   (fails when a restore left a declared target empty because the path was absent from the
+   chosen snapshot).
 4. ⏳ Repo-identity pinning + volume sentinel write/verify + asymmetric retention +
    `restic_allow_new_password` re-key (with control-key archival).
 

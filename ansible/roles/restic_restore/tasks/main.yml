@@ -12,26 +12,44 @@
 #   for every bundle. Real runs honour the configured failure flags.
 # ============================================================================
 
-# ----- Gate: the restic binary and env file must be present -----
+# ----- Gate: the restic binary and at least one source env file must exist -----
+#
+# Each bundle is restored from whichever configured source (primary env,
+# secondary env, ...) holds the newest matching snapshot. A source whose env
+# file is absent on the host is dropped from the effective set (e.g. a host
+# with no secondary configured). See RECOVERY.md "Multi-source restore".
 
 - name: Stat restic binary
   ansible.builtin.stat:
     path: "{{ restic_restore_binary_path }}"
   register: _restic_restore_binary_stat
 
-- name: Stat restic env file
+- name: Stat restic source env files
   ansible.builtin.stat:
-    path: "{{ restic_restore_env_file }}"
-  register: _restic_restore_env_stat
+    path: "{{ item.env_file }}"
+  register: _restic_restore_source_env_stat
+  loop: "{{ restic_restore_sources }}"
+  loop_control:
+    label: "{{ item.name }} ({{ item.env_file }})"
+
+- name: Compute effective restore sources
+  ansible.builtin.set_fact:
+    _restic_restore_effective_sources: >-
+      {{ _restic_restore_source_env_stat.results
+         | selectattr('stat.exists')
+         | map(attribute='item')
+         | list }}
 
 - name: Compute gate status
   ansible.builtin.set_fact:
     _restic_restore_gate_ok: >-
       {{ (_restic_restore_binary_stat.stat.exists | bool)
-         and (_restic_restore_env_stat.stat.exists | bool) }}
+         and (_restic_restore_effective_sources | length > 0) }}
     _restic_restore_gate_missing: >-
       {{ ([] if _restic_restore_binary_stat.stat.exists else [restic_restore_binary_path])
-         + ([] if _restic_restore_env_stat.stat.exists else [restic_restore_env_file]) }}
+         + (['no restore source env file present (tried: '
+             ~ (restic_restore_sources | map(attribute='env_file') | join(', ')) ~ ')']
+            if (_restic_restore_effective_sources | length == 0) else []) }}
 
 - name: Fail when restic is not installed (real run)
   ansible.builtin.fail:
@@ -52,53 +70,66 @@
     - not (_restic_restore_gate_ok | bool)
     - ansible_check_mode
 
-# ----- Probe: is the repository reachable? -----
+# ----- Probe: which sources are reachable? -----
 #
-# `restic snapshots --json --last 1` is the cheapest read-only call against
-# the configured repository. Non-zero exit means the backend is unreachable
-# (mount missing, network down, credentials wrong). check_mode: false is
-# safe — the command does not mutate anything on the host or in the repo.
+# `restic snapshots --json --last 1` is the cheapest read-only call against a
+# repository. Non-zero exit means that source is unreachable (mount missing,
+# network down, credentials wrong). check_mode: false is safe — it mutates
+# nothing. The repo is "reachable" if at least one source answers.
 
-- name: Probe restic repository reachability
+- name: Probe restore source reachability
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       set -a
-      . {{ restic_restore_env_file }}
+      . {{ item.env_file }}
       set +a
       {{ restic_restore_binary_path }} snapshots --json --last 1 >/dev/null
   args:
     executable: /bin/bash
-  register: _restic_restore_probe
+  register: _restic_restore_source_probe
   changed_when: false
   failed_when: false
   check_mode: false
+  loop: "{{ _restic_restore_effective_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
   when: _restic_restore_gate_ok | bool
+
+- name: Compute reachable sources
+  ansible.builtin.set_fact:
+    _restic_restore_reachable_sources: >-
+      {{ _restic_restore_source_probe.results | default([])
+         | selectattr('rc', 'defined')
+         | selectattr('rc', 'equalto', 0)
+         | map(attribute='item')
+         | list }}
 
 - name: Compute repo reachability
   ansible.builtin.set_fact:
     _restic_restore_repo_ok: >-
       {{ (_restic_restore_gate_ok | bool)
-         and ((_restic_restore_probe.rc | default(1)) == 0) }}
+         and (_restic_restore_reachable_sources | length > 0) }}
 
-- name: Fail when repo is unreachable (real run, fail_on_missing_repo=true)
+- name: Fail when no source is reachable (real run, fail_on_missing_repo=true)
   ansible.builtin.fail:
     msg: |
-      Restic repository is not reachable.
-      probe rc={{ _restic_restore_probe.rc | default('n/a') }}
-      stderr: {{ _restic_restore_probe.stderr | default('') | trim }}
+      No restic restore source is reachable.
+      Sources tried: {{ _restic_restore_effective_sources | map(attribute='name') | join(', ') }}
+      probe rcs: {{ _restic_restore_source_probe.results | default([])
+                    | map(attribute='rc') | list }}
   when:
     - _restic_restore_gate_ok | bool
     - not (_restic_restore_repo_ok | bool)
     - restic_restore_fail_on_missing_repo | bool
     - not ansible_check_mode
 
-- name: Warn when repo is unreachable (bundles will be skipped)
+- name: Warn when no source is reachable (bundles will be skipped)
   ansible.builtin.debug:
     msg: |
-      WARNING: restic repository unreachable.
-      probe rc={{ _restic_restore_probe.rc | default('n/a') }}
-      stderr: {{ _restic_restore_probe.stderr | default('') | trim }}
+      WARNING: no restic restore source reachable.
+      Sources tried: {{ _restic_restore_effective_sources | map(attribute='name') | join(', ') }}
+      probe rcs: {{ _restic_restore_source_probe.results | default([]) | map(attribute='rc') | list }}
       {% if ansible_check_mode and restic_restore_fail_on_missing_repo %}
       A real run with fail_on_missing_repo=true would fail here.
       Continuing check-mode inspection so the per-bundle plan is visible.
@@ -109,6 +140,13 @@
     - _restic_restore_gate_ok | bool
     - not (_restic_restore_repo_ok | bool)
     - (not restic_restore_fail_on_missing_repo) or ansible_check_mode
+
+- name: Report restore source plan
+  ansible.builtin.debug:
+    msg: >-
+      restore sources — configured: {{ restic_restore_sources | map(attribute='name') | join(', ') }};
+      present: {{ _restic_restore_effective_sources | map(attribute='name') | join(', ') | default('(none)', true) }};
+      reachable: {{ _restic_restore_reachable_sources | map(attribute='name') | join(', ') | default('(none)', true) }}
 
 # ----- Marker directory -----
 

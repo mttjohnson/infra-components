@@ -9,6 +9,21 @@
 restic_restore_binary_path: /usr/local/bin/restic
 restic_restore_env_file: /etc/restic/env
 
+# ----- Restore sources (multi-source; see RECOVERY.md) -----
+# Ordered list of repositories to restore from. For each bundle the role queries
+# every reachable source and restores from the one holding the newest matching
+# snapshot; ties resolve to the earlier source (the primary). A source whose env
+# file is absent on the host is dropped, so the secondary entry below is simply
+# ignored on hosts that have no secondary. The default covers the common case —
+# primary local repo + off-box secondary — so a rebuild whose local repo is gone
+# restores automatically from the off-box copy. Override to customise/extend.
+restic_restore_secondary_env_file: /etc/restic/env.secondary
+restic_restore_sources:
+  - name: primary
+    env_file: "{{ restic_restore_env_file }}"
+  - name: secondary
+    env_file: "{{ restic_restore_secondary_env_file }}"
+
 # ----- Blessed marker (fail-closed backup gate; see RECOVERY.md) -----
 # This role is the sole authority for the "blessed" marker the restic role's
 # state-changing jobs gate on. It writes the marker when the host is in a

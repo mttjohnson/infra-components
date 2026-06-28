@@ -25,6 +25,9 @@
     _restic_restore_targets_populated: false
     _restic_restore_snapshot_resolved: false
     _restic_restore_chosen_snapshot: {}
+    _restic_restore_candidates: []
+    _restic_restore_chosen_env_file: "{{ restic_restore_env_file }}"
+    _restic_restore_chosen_source: ""
     _restic_restore_target_root: "{{ _restic_restore_bundle.target | default('') | regex_replace('/+$', '') }}"
     _restic_restore_selector_paths: >-
       {{ _restic_restore_bundle.snapshot_selector.paths
@@ -76,18 +79,21 @@
            | select('equalto', 'populated') | list | length)
          == (_restic_restore_effective_targets | length) }}
 
-# ----- Snapshot selection -----
+# ----- Snapshot selection (multi-source) -----
 #
-# Only queried when gate and probe both succeeded; otherwise check-mode
-# inspection falls through with _restic_restore_snapshot_resolved=false and
-# the plan summary below reports "unresolved".
+# Query every reachable source for snapshots matching this bundle's selector,
+# then pick the one with the newest `time` across all sources — ties resolve to
+# the earlier source (the primary), so a steady-state host restores locally
+# while a rebuilt host whose local repo is gone restores from the off-box copy.
+# Only queried when the targets aren't already populated, so a converged host
+# skips the (potentially slow, off-box) source queries entirely.
 
-- name: Query snapshots matching selector
+- name: Query snapshots across sources for this bundle
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       set -a
-      . {{ restic_restore_env_file }}
+      . {{ item.env_file }}
       set +a
       {{ restic_restore_binary_path }} snapshots --json \
         {% for t in (_restic_restore_bundle.snapshot_selector.tags | default([])) %}
@@ -103,25 +109,56 @@
         --last 0
   args:
     executable: /bin/bash
-  register: _restic_restore_snapshots_raw
+  register: _restic_restore_src_snapshots
   changed_when: false
   failed_when: false
   check_mode: false
+  loop: "{{ _restic_restore_reachable_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
   when:
     - _restic_restore_gate_ok | bool
     - _restic_restore_repo_ok | bool
+    - not (_restic_restore_targets_populated | bool)
 
-- name: Pick the most recent matching snapshot
+- name: Build cross-source snapshot candidates (newest per source)
   ansible.builtin.set_fact:
-    _restic_restore_chosen_snapshot: >-
-      {{ ((_restic_restore_snapshots_raw.stdout | default('[]')) | from_json
-          | sort(attribute='time') | last) | default({}) }}
-    _restic_restore_snapshot_resolved: >-
-      {{ ((_restic_restore_snapshots_raw.stdout | default('[]')) | from_json | length) > 0 }}
+    _restic_restore_candidates: >-
+      {{ _restic_restore_candidates
+         + [ {
+               'source': _src_result.item.name,
+               'env_file': _src_result.item.env_file,
+               'snapshot': (_src_result.stdout | default('[]') | from_json | sort(attribute='time') | last)
+             } ] }}
+  loop: "{{ _restic_restore_src_snapshots.results | default([]) }}"
+  loop_control:
+    loop_var: _src_result
+    label: "{{ _src_result.item.name | default('?') }}"
   when:
-    - _restic_restore_gate_ok | bool
-    - _restic_restore_repo_ok | bool
-    - (_restic_restore_snapshots_raw.rc | default(1)) == 0
+    - (_src_result.stdout | default('[]') | from_json | length) > 0
+
+- name: Pick the newest snapshot across sources (ties → primary)
+  ansible.builtin.set_fact:
+    _restic_restore_snapshot_resolved: "{{ (_restic_restore_candidates | length) > 0 }}"
+    _restic_restore_chosen_snapshot: >-
+      {{ (_restic_restore_candidates
+          | selectattr('snapshot.time', 'equalto', _restic_restore_newest_time)
+          | map(attribute='snapshot') | first)
+         if (_restic_restore_candidates | length) > 0 else {} }}
+    _restic_restore_chosen_env_file: >-
+      {{ (_restic_restore_candidates
+          | selectattr('snapshot.time', 'equalto', _restic_restore_newest_time)
+          | map(attribute='env_file') | first)
+         if (_restic_restore_candidates | length) > 0 else restic_restore_env_file }}
+    _restic_restore_chosen_source: >-
+      {{ (_restic_restore_candidates
+          | selectattr('snapshot.time', 'equalto', _restic_restore_newest_time)
+          | map(attribute='source') | first)
+         if (_restic_restore_candidates | length) > 0 else '' }}
+  vars:
+    _restic_restore_newest_time: >-
+      {{ (_restic_restore_candidates | map(attribute='snapshot.time') | max)
+         if (_restic_restore_candidates | length) > 0 else '' }}
 
 # ----- Plan summary -----
 #
@@ -185,7 +222,9 @@
       restore_required:  {{ _restic_restore_bundle.restore_required | default(false) }}
       gate:              {{ 'ok' if _restic_restore_gate_ok else 'FAILED (binary or env missing)' }}
       repo:              {{ 'reachable' if _restic_restore_repo_ok else 'UNREACHABLE' }}
+      sources_reachable: {{ _restic_restore_reachable_sources | default([]) | map(attribute='name') | join(', ') | default('(none)', true) }}
       snapshot:          {{ _restic_restore_plan_snapshot }}
+      chosen_source:     {{ _restic_restore_chosen_source if _restic_restore_snapshot_resolved else '(none)' }}
       targets_populated: {{ _restic_restore_targets_populated }}
       action:            {{ _restic_restore_plan_action }}
 
@@ -231,7 +270,7 @@
     cmd: |
       set -euo pipefail
       set -a
-      . {{ restic_restore_env_file }}
+      . {{ _restic_restore_chosen_env_file }}
       set +a
       {{ restic_restore_binary_path }} restore {{ _restic_restore_chosen_snapshot.id | quote }} \
         --target {{ (_restic_restore_target_root if _restic_restore_target_root != '' else '/') | quote }} \
@@ -419,6 +458,71 @@
     - not (_restic_restore_targets_populated | bool)
     - _restic_restore_bundle.post_restore_hook is defined
 
+# ----- Post-restore population verification (real runs) -----
+#
+# `restic restore --include <path>` silently restores nothing for a path that
+# is not present in the snapshot, so a restore can "succeed" yet leave a target
+# empty — a mistyped path, or a declared path absent from the chosen snapshot
+# (including a partial multi-path bundle where only some files were captured).
+# After an actual restore, re-probe the effective targets and fail if any is
+# still empty. The restore is skipped under --check, so this is a real-run guard.
+
+- name: Re-probe target population after restore
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      p={{ item | quote }}
+      if [ -d "$p" ]; then
+        if [ -n "$(ls -A "$p" 2>/dev/null)" ]; then echo populated; else echo empty; fi
+      elif [ -f "$p" ] && [ -s "$p" ]; then
+        echo populated
+      else
+        echo empty
+      fi
+  args:
+    executable: /bin/bash
+  register: _restic_restore_post_pop
+  changed_when: false
+  check_mode: false
+  loop: "{{ _restic_restore_effective_targets }}"
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - not ansible_check_mode
+
+- name: Identify target paths still empty after restore
+  ansible.builtin.set_fact:
+    _restic_restore_post_empty_targets: >-
+      {{ _restic_restore_post_pop.results | default([])
+         | selectattr('stdout', 'defined')
+         | rejectattr('stdout', 'search', 'populated')
+         | map(attribute='item') | list }}
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - not ansible_check_mode
+
+- name: Fail when a restore left target paths empty (declared path not in snapshot)
+  ansible.builtin.fail:
+    msg: |
+      Restore of bundle '{{ _restic_restore_bundle.name }}' from snapshot
+      {{ _restic_restore_chosen_snapshot.short_id | default(_restic_restore_chosen_snapshot.id | default('?')) }}
+      (source: {{ _restic_restore_chosen_source }}) left these target paths empty — the
+      declared path(s) are likely absent from the chosen snapshot:
+        {{ _restic_restore_post_empty_targets | join(', ') }}
+      Verify the bundle's `paths` and `snapshot_selector` (e.g. with `restic ls <snapshot>`).
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
+    - not ansible_check_mode
+    - (_restic_restore_post_empty_targets | default([])) | length > 0
+
 # ----- Marker file (diagnostic only) -----
 
 - name: Write marker file
@@ -436,6 +540,7 @@
       snapshot_time: "{{ _restic_restore_chosen_snapshot.time }}"
       snapshot_hostname: "{{ _restic_restore_chosen_snapshot.hostname | default('') }}"
       snapshot_tags: "{{ _restic_restore_chosen_snapshot.tags | default([]) }}"
+      snapshot_source: "{{ _restic_restore_chosen_source }}"
       restored_at: "{{ ansible_facts['date_time']['iso8601'] | default('') }}"
       paths: "{{ _restic_restore_bundle.paths }}"
       target: "{{ _restic_restore_target_root }}"
