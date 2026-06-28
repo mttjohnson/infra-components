@@ -86,6 +86,17 @@ restic_local_repository_owner: root
 restic_local_repository_group: root
 restic_local_repository_mode: "0700"
 
+# Guard against silently writing the primary repository (and backups) to the
+# instance's local root disk when the repository's backing volume failed to
+# mount. When true, the role refuses to init — and the scheduled primary jobs
+# refuse to run — unless the repository path is a mountpoint. Default false so a
+# deliberately root-disk-only "light local backup" (no attached volume) works
+# out of the box; set true on hosts where the repository lives on an attached
+# volume AND `mountpoint -q` reports it reliably (it may not inside some system
+# containers — the volume sentinel guards that case independently). Only applies
+# when restic_repository is a local path.
+restic_require_mountpoint: false
+
 # ----- Password -----
 # A repository password is generated on the remote host if the password
 # file does not already exist. The password is never regenerated once
@@ -93,18 +104,40 @@ restic_local_repository_mode: "0700"
 restic_password_file: "{{ restic_config_dir }}/password"
 restic_password_length: 64
 
-# Optionally fetch the generated password file back to the control node
-# so it lives somewhere other than the remote system being backed up.
-# Strongly recommended for disaster recovery.
+# Optionally fetch the generated password file back to the control node so it
+# lives somewhere other than the remote system being backed up. Strongly
+# recommended for disaster recovery: it is the only copy of the key that
+# survives a rebuild of the host, and the role reseeds a rebuilt host from it
+# (see "Password seeding" below). The fetch is write-once — it never overwrites
+# an existing control-node copy — so a good key can't be clobbered.
 restic_fetch_password_to_control: false
 
-# Directory on the control node where fetched password files are stored.
-# Each host's password is written to
-# {{ restic_control_password_dir }}/{{ inventory_hostname }}.password
-# The directory is created on the control node if missing.
-restic_control_password_dir: "./restic_passwords"
-restic_control_password_dir_mode: "0700"
-restic_control_password_file_mode: "0600"
+# ----- Control-node state directory -----
+# One flat directory on the control node holding all per-host restic state. The
+# host name is a filename PREFIX (no nested subdirectories) so a clustered
+# implementation can keep several instances' state side by side. Only the
+# password file is secret; the other state files (repo-id pins, volume sentinel)
+# are non-secret and safe to commit. See RECOVERY.md.
+#   {{ restic_control_dir }}/{{ restic_control_state_prefix }}.password
+#   {{ restic_control_dir }}/{{ restic_control_state_prefix }}.primary.repo-id
+#   {{ restic_control_dir }}/{{ restic_control_state_prefix }}.secondary.repo-id
+#   {{ restic_control_dir }}/{{ restic_control_state_prefix }}.volume.sentinel-id
+restic_control_dir: "./restic-state"
+restic_control_state_prefix: "{{ inventory_hostname }}"
+restic_control_dir_mode: "0700"
+restic_control_password_file_mode: "0600"   # the password is secret
+restic_control_state_file_mode: "0644"      # non-secret pins / sentinel ids
+
+# Path to this host's password copy on the control node. Derived from the above;
+# override only if you need a non-standard layout.
+restic_control_password_file: "{{ restic_control_dir }}/{{ restic_control_state_prefix }}.password"
+
+# Reseed the host password from the control-node copy when the host has none
+# (e.g. after a rebuild) instead of generating a fresh password that would
+# orphan existing backups. Only generates a new password when neither the host
+# nor the control node has one. Disable to force the legacy generate-only
+# behaviour.
+restic_seed_password_from_control: true
 
 # ----- Backend credentials / environment -----
 # Extra environment variables placed in /etc/restic/env. Use this for

@@ -170,11 +170,50 @@
     mode: "0750"
 
 # ----- Password file -----
+#
+# Establishment order (see RECOVERY.md):
+#   1. If the host already has a password, keep it.
+#   2. Else if the control node holds one for this host and seeding is enabled,
+#      reseed the host from it so we reuse the existing key and can read existing
+#      backups (the rebuild / disaster-recovery path).
+#   3. Else generate a fresh password (genuine first deployment).
+# The fetch-back to the control node is write-once so a good key is never
+# clobbered.
 
-- name: Check if restic password file exists
+- name: Check if restic password file exists on the host
   ansible.builtin.stat:
     path: "{{ restic_password_file }}"
   register: _restic_password_file_stat
+
+- name: Check for a control-node password copy for this host
+  ansible.builtin.stat:
+    path: "{{ restic_control_password_file }}"
+  register: _restic_control_password_stat
+  delegate_to: localhost
+  become: false
+
+- name: Compute password-establishment plan
+  ansible.builtin.set_fact:
+    # Reseed from control when the host has none and a control copy exists.
+    _restic_will_seed_password: >-
+      {{ (not _restic_password_file_stat.stat.exists)
+         and (_restic_control_password_stat.stat.exists | bool)
+         and (restic_seed_password_from_control | bool) }}
+    # Generate only when the host has none and we are not seeding from control.
+    _restic_will_generate_password: >-
+      {{ (not _restic_password_file_stat.stat.exists)
+         and not ((_restic_control_password_stat.stat.exists | bool)
+                  and (restic_seed_password_from_control | bool)) }}
+
+- name: Seed restic password from the control node (rebuild / recovery)
+  ansible.builtin.copy:
+    src: "{{ restic_control_password_file }}"
+    dest: "{{ restic_password_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: _restic_will_seed_password | bool
 
 - name: Generate new restic repository password
   ansible.builtin.shell:
@@ -184,7 +223,7 @@
   register: _restic_password_gen
   check_mode: false
   changed_when: false
-  when: not _restic_password_file_stat.stat.exists
+  when: _restic_will_generate_password | bool
 
 - name: Write restic password file
   ansible.builtin.copy:
@@ -194,35 +233,41 @@
     group: root
     mode: "0600"
   no_log: true
-  when: not _restic_password_file_stat.stat.exists
+  when: _restic_will_generate_password | bool
 
-# ----- Optionally copy password file back to the control node -----
+# ----- Optionally copy password file back to the control node (write-once) -----
 
 - name: Save restic password file to control node
   when: restic_fetch_password_to_control | bool
   block:
-    - name: Ensure control-node password directory exists
+    - name: Ensure control-node state directory exists
       ansible.builtin.file:
-        path: "{{ restic_control_password_dir }}"
+        path: "{{ restic_control_dir }}"
         state: directory
-        mode: "{{ restic_control_password_dir_mode }}"
+        mode: "{{ restic_control_dir_mode }}"
       delegate_to: localhost
       become: false
       run_once: true
 
+    # Write-once: only fetch when no control-node copy exists yet, so the only
+    # surviving copy of an existing key can never be overwritten. A deliberate
+    # re-key (restic_allow_new_password) archives the old copy first; see
+    # RECOVERY.md.
     - name: Fetch restic password file to control node
       ansible.builtin.fetch:
         src: "{{ restic_password_file }}"
-        dest: "{{ restic_control_password_dir }}/{{ inventory_hostname }}.password"
+        dest: "{{ restic_control_password_file }}"
         flat: true
+      when: not (_restic_control_password_stat.stat.exists | bool)
       ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Tighten permissions on fetched password file
       ansible.builtin.file:
-        path: "{{ restic_control_password_dir }}/{{ inventory_hostname }}.password"
+        path: "{{ restic_control_password_file }}"
         mode: "{{ restic_control_password_file_mode }}"
       delegate_to: localhost
       become: false
+      when: not (_restic_control_password_stat.stat.exists | bool)
       ignore_errors: "{{ ansible_check_mode }}"
 
 # ----- Environment file (RESTIC_REPOSITORY + RESTIC_PASSWORD_FILE + backend creds) -----

@@ -54,16 +54,34 @@ restic_env:
 
 ### Saving the password to the control node
 
-Strongly recommended — without the password, the backups are unrecoverable.
+Strongly recommended — without the password, the backups are unrecoverable, and
+the control-node copy is what lets the role reseed (and therefore recover) a
+rebuilt host. See [RECOVERY.md](RECOVERY.md) for the full design.
 
 ```yaml
 restic_fetch_password_to_control: true
-restic_control_password_dir: "~/restic-passwords"
+restic_control_dir: "~/restic-state"
 ```
 
 The first run generates the password on the remote host and fetches it to
-`~/restic-passwords/<inventory_hostname>.password` on the control node with
-mode `0600`. Subsequent runs re-fetch the existing file (idempotent).
+`~/restic-state/<inventory_hostname>.password` on the control node with mode
+`0600`. The fetch is **write-once**: once a control-node copy exists it is never
+overwritten, so a good key cannot be clobbered by a later run.
+
+**Password establishment order** (see [RECOVERY.md](RECOVERY.md)):
+
+1. If the host already has `/etc/restic/password`, keep it.
+2. Else if the control node holds a copy for this host and
+   `restic_seed_password_from_control` is true (default), **reseed the host from
+   it** — this is the rebuild / disaster-recovery path, reusing the existing key
+   so existing backups remain readable.
+3. Else generate a fresh password (genuine first deployment).
+
+The control-node state directory is flat, with the host name as a filename
+**prefix** (no nested subdirectories) so a clustered implementation can keep
+several instances' state side by side. Only `<prefix>.password` is secret; the
+other state files written by the recovery design (repo-id pins, volume sentinel
+id) are non-secret and safe to commit alongside the implementation config.
 
 ### Switching scheduler
 
@@ -206,6 +224,7 @@ When restic publishes a new signing key:
 | Variable | Default | Description |
 |---|---|---|
 | `restic_repository` | `/data/backups` | Repository URL (anything restic understands — local path, `s3:...`, `b2:...`, `rclone:...`, etc.) |
+| `restic_require_mountpoint` | `false` | Refuse to init / run primary jobs unless the local repository path is a mountpoint (guards against writing backups to the root disk if the volume failed to mount). See [RECOVERY.md](RECOVERY.md). |
 | `restic_manage_local_repository_dir` | `true` | Create the local repository directory on the remote host (only meaningful for filesystem paths) |
 | `restic_local_repository_owner` | `root` | Owner for the local repository directory |
 | `restic_local_repository_group` | `root` | Group for the local repository directory |
@@ -216,15 +235,20 @@ When restic publishes a new signing key:
 | Variable | Default | Description |
 |---|---|---|
 | `restic_password_file` | `/etc/restic/password` | Path to the repository password file on the remote host |
-| `restic_password_length` | `64` | Length of the generated password (only used on first run) |
-| `restic_fetch_password_to_control` | `false` | Fetch the password file back to the Ansible control node |
-| `restic_control_password_dir` | `./restic_passwords` | Directory on the control node where fetched passwords are stored |
-| `restic_control_password_dir_mode` | `0700` | Mode for the control-node password directory |
-| `restic_control_password_file_mode` | `0600` | Mode for fetched password files |
+| `restic_password_length` | `64` | Length of the generated password (only used when generating a fresh password) |
+| `restic_seed_password_from_control` | `true` | Reseed the host password from the control-node copy when the host has none (rebuild/recovery) instead of generating a new one |
+| `restic_fetch_password_to_control` | `false` | Fetch the password file back to the Ansible control node (write-once — never overwrites an existing copy) |
+| `restic_control_dir` | `./restic-state` | Flat directory on the control node for all per-host restic state (host name is a filename prefix) |
+| `restic_control_state_prefix` | `{{ inventory_hostname }}` | Filename prefix for this host's control-node state files |
+| `restic_control_password_file` | `{{ restic_control_dir }}/{{ restic_control_state_prefix }}.password` | Derived path to this host's control-node password copy |
+| `restic_control_dir_mode` | `0700` | Mode for the control-node state directory |
+| `restic_control_password_file_mode` | `0600` | Mode for the (secret) fetched password file |
+| `restic_control_state_file_mode` | `0644` | Mode for non-secret state files (repo-id pins, sentinel ids) |
 
 > **Important:** the password is generated once and never rotated by the role.
 > Losing it makes the backups unrecoverable. Enable `restic_fetch_password_to_control`
-> or arrange another secure off-host copy.
+> (and replicate the control-node copy off-host) — it is also what lets the role
+> reseed and recover a rebuilt host. See [RECOVERY.md](RECOVERY.md).
 
 ### Backend credentials / environment
 
