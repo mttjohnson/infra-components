@@ -11,10 +11,10 @@ set +a
 # forget marks snapshots for deletion according to the retention policy
 # but does not reclaim space; that's the prune job's responsibility.
 exec {{ restic_binary_install_dir }}/restic forget \
-  --keep-daily {{ restic_keep_daily }} \
-  --keep-weekly {{ restic_keep_weekly }} \
-  --keep-monthly {{ restic_keep_monthly }} \
-  --keep-yearly {{ restic_keep_yearly }} \
+  --keep-daily {{ item.keep_daily | default(restic_keep_daily) }} \
+  --keep-weekly {{ item.keep_weekly | default(restic_keep_weekly) }} \
+  --keep-monthly {{ item.keep_monthly | default(restic_keep_monthly) }} \
+  --keep-yearly {{ item.keep_yearly | default(restic_keep_yearly) }} \
 {% for arg in restic_forget_extra_args %}
   {{ arg }} \
 {% endfor %}

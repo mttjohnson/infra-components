@@ -232,12 +232,17 @@ under `--check`:
    restores automatically from the off-box copy + post-restore population verification
    (fails when a restore left a declared target empty because the path was absent from the
    chosen snapshot).
-4. ⏳ Repo-identity pinning + volume sentinel write/verify + asymmetric retention +
-   `restic_allow_new_password` re-key (with control-key archival).
+4. ✅ **Done.** Volume sentinel (on-host id + control-node pin; mismatch → fail, pinned but
+   absent → recovery signal + warn) + repository-identity pinning (warn by default,
+   `restic_repo_id_pin_strict` to fail) + asymmetric retention (independent
+   `restic_secondary_keep_*`) + `restic_allow_new_password` re-key with control-key
+   archival.
 
-> Until stage 4 lands, the **volume sentinel** and **repo-identity pin** signals described
-> above are part of the target design but not yet written, so the "data volume swapped
-> while the root filesystem is intact" gap is not yet closed. Stages 1–2 close the main
-> rebuild path (host and/or control-node rebuild) and the retention-erosion window.
+> **Residual limitation.** The volume sentinel reliably catches a *wrong* volume (a
+> different id is mounted) and serves as a recovery signal when the pinned volume is
+> absent, but it cannot by itself distinguish a rebuilt-but-mounted volume from an
+> *unmounted* path (both present as "pinned but no on-host sentinel"). Where the data
+> volume can fail to mount, enable `restic_require_mountpoint` (the hard unmounted-volume
+> guard) on hosts where `mountpoint -q` is reliable.
 
 See each role's `README.md` for the per-variable reference.

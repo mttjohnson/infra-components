@@ -211,24 +211,112 @@
     - _restic_secondary_enabled | bool
     - restic_secondary_repository.startswith('/')
 
+# ----- Volume sentinel (see RECOVERY.md) -----
+# Recognise the repository's backing volume across rebuilds.
+
+- name: Stat the on-host volume sentinel
+  ansible.builtin.stat:
+    path: "{{ restic_volume_sentinel_path }}"
+  register: _restic_host_sentinel_stat
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+
+- name: Read the on-host volume sentinel id
+  ansible.builtin.slurp:
+    src: "{{ restic_volume_sentinel_path }}"
+  register: _restic_host_sentinel_slurp
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+    - _restic_host_sentinel_stat.stat.exists | default(false) | bool
+
+- name: Stat the control-node volume sentinel pin
+  ansible.builtin.stat:
+    path: "{{ restic_control_volume_sentinel_file }}"
+  register: _restic_control_sentinel_stat
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+
+- name: Read the control-node volume sentinel pin
+  ansible.builtin.slurp:
+    src: "{{ restic_control_volume_sentinel_file }}"
+  register: _restic_control_sentinel_slurp
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+    - _restic_control_sentinel_stat.stat.exists | default(false) | bool
+
 - name: Compute recovery signals
   ansible.builtin.set_fact:
     restic_host_password_present: "{{ _restic_password_file_stat.stat.exists | bool }}"
     restic_control_password_present: "{{ _restic_control_password_stat.stat.exists | bool }}"
     restic_primary_repo_exists: "{{ (_restic_primary_config_stat.stat.exists | default(false)) | bool }}"
     restic_secondary_repo_exists: "{{ (_restic_secondary_config_stat.stat.exists | default(false)) | bool }}"
+    restic_sentinel_host_present: "{{ _restic_host_sentinel_stat.stat.exists | default(false) | bool }}"
+    restic_sentinel_pinned: "{{ _restic_control_sentinel_stat.stat.exists | default(false) | bool }}"
+    restic_host_sentinel_id: "{{ (_restic_host_sentinel_slurp.content | b64decode | trim) if (_restic_host_sentinel_slurp.content is defined) else '' }}"
+    restic_control_sentinel_id: "{{ (_restic_control_sentinel_slurp.content | b64decode | trim) if (_restic_control_sentinel_slurp.content is defined) else '' }}"
     restic_fresh_start_active: >-
       {{ ((restic_force_fresh_start | default('')) | length > 0)
          and ((restic_force_fresh_start | default('')) == inventory_hostname) }}
+
+- name: Compute sentinel status
+  ansible.builtin.set_fact:
+    # A different volume is mounted than expected (both present, ids differ).
+    restic_sentinel_mismatch: >-
+      {{ restic_sentinel_host_present and restic_sentinel_pinned
+         and (restic_host_sentinel_id != restic_control_sentinel_id) }}
+    # The volume looks freshly rebuilt / unmounted (pinned but no on-host id).
+    restic_sentinel_absent_pinned: >-
+      {{ restic_sentinel_pinned and not restic_sentinel_host_present }}
 
 - name: Compute recovery_expected
   ansible.builtin.set_fact:
     # Any one of these indicates a prior backup was established for this host.
     restic_recovery_expected: >-
       {{ restic_host_password_present or restic_control_password_present
-         or restic_primary_repo_exists or restic_secondary_repo_exists }}
+         or restic_primary_repo_exists or restic_secondary_repo_exists
+         or restic_sentinel_absent_pinned }}
     # A usable key exists if the host has one or the control node holds a copy.
     restic_have_usable_key: "{{ restic_host_password_present or restic_control_password_present }}"
+
+# Hard stop: a DIFFERENT volume is mounted than the one pinned for this host.
+# Unambiguous (both ids present and differ) — refuse rather than operate on the
+# wrong disk. Override with restic_force_fresh_start to adopt the new volume.
+- name: Fail when a different data volume is mounted than expected (real run)
+  ansible.builtin.fail:
+    msg: |
+      The data volume mounted at {{ restic_repository | dirname }} does not match the
+      volume pinned for this host:
+        on-host sentinel {{ restic_volume_sentinel_path }}: {{ restic_host_sentinel_id }}
+        control-node pin {{ restic_control_volume_sentinel_file }}: {{ restic_control_sentinel_id }}
+      Refusing to operate on the wrong disk. If this is an intentional replacement,
+      set restic_force_fresh_start={{ inventory_hostname }} to adopt it.
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_sentinel_mismatch | bool
+    - not (restic_fresh_start_active | bool)
+    - not ansible_check_mode
+
+- name: Warn on volume sentinel anomaly (check mode / rebuilt-looking volume)
+  ansible.builtin.debug:
+    msg: >-
+      {% if restic_sentinel_mismatch %}WARNING: a real run WOULD FAIL — a different data
+      volume is mounted than pinned (host={{ restic_host_sentinel_id }},
+      pin={{ restic_control_sentinel_id }}).{% elif restic_sentinel_absent_pinned %}NOTE:
+      volume sentinel pinned but absent on host — the backing volume at
+      {{ restic_repository | dirname }} looks freshly rebuilt or unmounted; recovery is
+      engaged. If it is actually UNMOUNTED, enable restic_require_mountpoint so backups
+      don't write to the root disk.{% else %}volume sentinel ok{% endif %}
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - (restic_sentinel_mismatch | bool) or (restic_sentinel_absent_pinned | bool)
 
 # Fail-early hard stop: an initialized repository exists but no password is
 # available to read it. Generating a new key here would orphan the existing
@@ -265,16 +353,20 @@
 
 - name: Compute password-establishment plan
   ansible.builtin.set_fact:
-    # Reseed from control when the host has none and a control copy exists.
+    # Reseed from control when the host has none and a control copy exists,
+    # unless a deliberate re-key (restic_allow_new_password) is requested.
     _restic_will_seed_password: >-
       {{ (not _restic_password_file_stat.stat.exists)
          and (_restic_control_password_stat.stat.exists | bool)
-         and (restic_seed_password_from_control | bool) }}
-    # Generate only when the host has none and we are not seeding from control.
+         and (restic_seed_password_from_control | bool)
+         and not (restic_allow_new_password | bool) }}
+    # Generate when the host has none and we are not seeding from control (no
+    # control copy, seeding disabled, or an explicit re-key).
     _restic_will_generate_password: >-
       {{ (not _restic_password_file_stat.stat.exists)
          and not ((_restic_control_password_stat.stat.exists | bool)
-                  and (restic_seed_password_from_control | bool)) }}
+                  and (restic_seed_password_from_control | bool)
+                  and not (restic_allow_new_password | bool)) }}
 
 - name: Seed restic password from the control node (rebuild / recovery)
   ansible.builtin.copy:
@@ -320,16 +412,34 @@
       become: false
       run_once: true
 
-    # Write-once: only fetch when no control-node copy exists yet, so the only
-    # surviving copy of an existing key can never be overwritten. A deliberate
-    # re-key (restic_allow_new_password) archives the old copy first; see
-    # RECOVERY.md.
+    # Archive the existing control-node copy before a deliberate re-key
+    # overwrites it, so the old key (and access to any backups it still
+    # protects) is never destroyed.
+    - name: Archive existing control-node password before re-key
+      ansible.builtin.copy:
+        src: "{{ restic_control_password_file }}"
+        dest: "{{ restic_control_password_file }}.{{ ansible_facts['date_time']['iso8601_basic_short'] | default('rekey') }}.bak"
+        remote_src: true
+        mode: "{{ restic_control_password_file_mode }}"
+      delegate_to: localhost
+      become: false
+      when:
+        - restic_allow_new_password | bool
+        - _restic_will_generate_password | bool
+        - _restic_control_password_stat.stat.exists | bool
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    # Fetch when no control-node copy exists yet (write-once, so a good key can
+    # never be clobbered), or when a re-key generated a new one (the old copy was
+    # archived just above). See RECOVERY.md.
     - name: Fetch restic password file to control node
       ansible.builtin.fetch:
         src: "{{ restic_password_file }}"
         dest: "{{ restic_control_password_file }}"
         flat: true
-      when: not (_restic_control_password_stat.stat.exists | bool)
+      when: >-
+        (not (_restic_control_password_stat.stat.exists | bool))
+        or ((restic_allow_new_password | bool) and (_restic_will_generate_password | bool))
       ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Tighten permissions on fetched password file
@@ -338,7 +448,9 @@
         mode: "{{ restic_control_password_file_mode }}"
       delegate_to: localhost
       become: false
-      when: not (_restic_control_password_stat.stat.exists | bool)
+      when: >-
+        (not (_restic_control_password_stat.stat.exists | bool))
+        or ((restic_allow_new_password | bool) and (_restic_will_generate_password | bool))
       ignore_errors: "{{ ansible_check_mode }}"
 
 # ----- Environment file (RESTIC_REPOSITORY + RESTIC_PASSWORD_FILE + backend creds) -----
@@ -508,6 +620,193 @@
       when:
         - ansible_check_mode
         - not _restic_binary_post_install.stat.exists
+
+# ----- Volume sentinel write (only once the volume is confirmed present) -----
+# Written after init so the repo's `config` confirms the correct volume is
+# mounted (we don't stamp a sentinel onto an unmounted root disk). On a rebuilt
+# volume the existing control pin is adopted; on a true first deploy a fresh id
+# is generated and pinned to the control node.
+
+- name: Re-check primary repository presence after init
+  ansible.builtin.stat:
+    path: "{{ restic_repository }}/config"
+  register: _restic_primary_config_post
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+
+- name: Generate a new volume sentinel id (first deploy, none pinned)
+  ansible.builtin.command:
+    cmd: cat /proc/sys/kernel/random/uuid
+  register: _restic_new_sentinel_uuid
+  changed_when: false
+  check_mode: false
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+    - not (restic_sentinel_host_present | bool)
+    - not (restic_sentinel_pinned | bool)
+    - _restic_primary_config_post.stat.exists | default(false) | bool
+
+- name: Determine volume sentinel id to write
+  ansible.builtin.set_fact:
+    _restic_sentinel_id_to_write: >-
+      {{ restic_control_sentinel_id if (restic_sentinel_pinned | bool)
+         else (_restic_new_sentinel_uuid.stdout | default('') | trim) }}
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+
+- name: Write the on-host volume sentinel
+  ansible.builtin.copy:
+    content: "{{ _restic_sentinel_id_to_write }}\n"
+    dest: "{{ restic_volume_sentinel_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+    - not (restic_sentinel_host_present | bool)
+    - _restic_primary_config_post.stat.exists | default(false) | bool
+    - (_restic_sentinel_id_to_write | default('')) | length > 0
+
+- name: Pin the volume sentinel id to the control node
+  ansible.builtin.copy:
+    content: "{{ _restic_sentinel_id_to_write }}\n"
+    dest: "{{ restic_control_volume_sentinel_file }}"
+    mode: "{{ restic_control_state_file_mode }}"
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_volume_sentinel_enabled | bool
+    - restic_repository.startswith('/')
+    - not (restic_sentinel_pinned | bool)
+    - (_restic_sentinel_id_to_write | default('')) | length > 0
+
+# ----- Repository identity pinning -----
+# Record each repository's `cat config` id on the control node (write-once) and
+# warn (or fail, when strict) if a live id later differs from its pin.
+
+- name: Compute live repository ids
+  ansible.builtin.set_fact:
+    _restic_primary_live_id: >-
+      {{ ((_restic_cat_config.stdout | default('')) | from_json).id
+         if (((_restic_cat_config.rc | default(1)) == 0)
+             and ((_restic_cat_config.stdout | default('')) | length > 0))
+         else '' }}
+    _restic_secondary_live_id: >-
+      {{ ((_restic_secondary_cat_config.stdout | default('')) | from_json).id
+         if ((_restic_secondary_cat_config is defined)
+             and ((_restic_secondary_cat_config.rc | default(1)) == 0)
+             and ((_restic_secondary_cat_config.stdout | default('')) | length > 0))
+         else '' }}
+  when: restic_repo_id_pin_enabled | bool
+
+- name: Stat control-node primary repo id pin
+  ansible.builtin.stat:
+    path: "{{ restic_control_primary_repo_id_file }}"
+  register: _restic_primary_pin_stat
+  delegate_to: localhost
+  become: false
+  when: restic_repo_id_pin_enabled | bool
+
+- name: Read control-node primary repo id pin
+  ansible.builtin.slurp:
+    src: "{{ restic_control_primary_repo_id_file }}"
+  register: _restic_primary_pin_slurp
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - _restic_primary_pin_stat.stat.exists | default(false) | bool
+
+- name: Stat control-node secondary repo id pin
+  ansible.builtin.stat:
+    path: "{{ restic_control_secondary_repo_id_file }}"
+  register: _restic_secondary_pin_stat
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - _restic_secondary_enabled | bool
+
+- name: Read control-node secondary repo id pin
+  ansible.builtin.slurp:
+    src: "{{ restic_control_secondary_repo_id_file }}"
+  register: _restic_secondary_pin_slurp
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - _restic_secondary_enabled | bool
+    - _restic_secondary_pin_stat.stat.exists | default(false) | bool
+
+- name: Detect repository identity mismatch
+  ansible.builtin.set_fact:
+    _restic_primary_pinned_id: "{{ (_restic_primary_pin_slurp.content | b64decode | trim) if (_restic_primary_pin_slurp.content is defined) else '' }}"
+    _restic_secondary_pinned_id: "{{ (_restic_secondary_pin_slurp.content | b64decode | trim) if (_restic_secondary_pin_slurp.content is defined) else '' }}"
+  when: restic_repo_id_pin_enabled | bool
+
+- name: Compute repository identity mismatch flags
+  ansible.builtin.set_fact:
+    _restic_primary_id_mismatch: >-
+      {{ ((_restic_primary_pinned_id | length) > 0) and ((_restic_primary_live_id | length) > 0)
+         and (_restic_primary_pinned_id != _restic_primary_live_id) }}
+    _restic_secondary_id_mismatch: >-
+      {{ ((_restic_secondary_pinned_id | length) > 0) and ((_restic_secondary_live_id | length) > 0)
+         and (_restic_secondary_pinned_id != _restic_secondary_live_id) }}
+  when: restic_repo_id_pin_enabled | bool
+
+- name: Fail on repository identity mismatch (strict, real run)
+  ansible.builtin.fail:
+    msg: |
+      restic repository identity differs from the pinned value (pointed at a different
+      or re-initialized repository than before):
+      {% if _restic_primary_id_mismatch %}  primary: pinned {{ _restic_primary_pinned_id }} != live {{ _restic_primary_live_id }}
+      {% endif %}{% if _restic_secondary_id_mismatch %}  secondary: pinned {{ _restic_secondary_pinned_id }} != live {{ _restic_secondary_live_id }}
+      {% endif %}
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - restic_repo_id_pin_strict | bool
+    - (_restic_primary_id_mismatch | bool) or (_restic_secondary_id_mismatch | bool)
+    - not ansible_check_mode
+
+- name: Warn on repository identity mismatch
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: restic repository identity differs from the pinned value —
+      primary {{ ('MISMATCH (pinned ' ~ _restic_primary_pinned_id ~ ' != live ' ~ _restic_primary_live_id ~ ')') if _restic_primary_id_mismatch else 'ok' }};
+      secondary {{ ('MISMATCH (pinned ' ~ _restic_secondary_pinned_id ~ ' != live ' ~ _restic_secondary_live_id ~ ')') if _restic_secondary_id_mismatch else 'ok' }}.
+      {% if restic_repo_id_pin_strict and ansible_check_mode %}A real run with restic_repo_id_pin_strict would FAIL here.{% endif %}
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - (_restic_primary_id_mismatch | bool) or (_restic_secondary_id_mismatch | bool)
+
+- name: Pin primary repository id to the control node (write-once)
+  ansible.builtin.copy:
+    content: "{{ _restic_primary_live_id }}\n"
+    dest: "{{ restic_control_primary_repo_id_file }}"
+    mode: "{{ restic_control_state_file_mode }}"
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - (_restic_primary_live_id | length) > 0
+    - not (_restic_primary_pin_stat.stat.exists | default(false) | bool)
+
+- name: Pin secondary repository id to the control node (write-once)
+  ansible.builtin.copy:
+    content: "{{ _restic_secondary_live_id }}\n"
+    dest: "{{ restic_control_secondary_repo_id_file }}"
+    mode: "{{ restic_control_state_file_mode }}"
+  delegate_to: localhost
+  become: false
+  when:
+    - restic_repo_id_pin_enabled | bool
+    - _restic_secondary_enabled | bool
+    - (_restic_secondary_live_id | length) > 0
+    - not (_restic_secondary_pin_stat.stat.exists | default(false) | bool)
 
 # ----- Deploy backup / forget / prune / check scripts -----
 

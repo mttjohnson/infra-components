@@ -101,6 +101,10 @@ _restic_secondary_jobs:
     repository: "{{ restic_secondary_repository }}"
     require_mountpoint: "{{ restic_secondary_require_mountpoint }}"
     blessed_gate: true
+    keep_daily: "{{ restic_secondary_keep_daily }}"
+    keep_weekly: "{{ restic_secondary_keep_weekly }}"
+    keep_monthly: "{{ restic_secondary_keep_monthly }}"
+    keep_yearly: "{{ restic_secondary_keep_yearly }}"
     systemd_schedule: "{{ restic_secondary_forget_schedule }}"
     cron: "{{ restic_secondary_forget_cron }}"
   - name: prune-secondary

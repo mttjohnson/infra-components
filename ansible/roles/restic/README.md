@@ -237,6 +237,7 @@ When restic publishes a new signing key:
 | `restic_password_file` | `/etc/restic/password` | Path to the repository password file on the remote host |
 | `restic_password_length` | `64` | Length of the generated password (only used when generating a fresh password) |
 | `restic_seed_password_from_control` | `true` | Reseed the host password from the control-node copy when the host has none (rebuild/recovery) instead of generating a new one |
+| `restic_allow_new_password` | `false` | Re-key override: generate a new password despite a control-node copy; archives the old copy (`<file>.<ts>.bak`) before overwriting. Does not re-encrypt an existing repo — use with `restic_force_fresh_start` on a reset |
 | `restic_fetch_password_to_control` | `false` | Fetch the password file back to the Ansible control node (write-once — never overwrites an existing copy) |
 | `restic_control_dir` | `./restic-state` | Flat directory on the control node for all per-host restic state (host name is a filename prefix) |
 | `restic_control_state_prefix` | `{{ inventory_hostname }}` | Filename prefix for this host's control-node state files |
@@ -274,6 +275,16 @@ never silently turn into a fresh start that loses data. The full design is in
 |---|---|---|
 | `restic_blessed_marker_path` | `{{ restic_config_dir }}/blessed` | Fail-closed gate marker the state-changing jobs require; written/removed by `restic_restore` (its `restic_restore_blessed_marker_path` must match) |
 | `restic_force_fresh_start` | `""` | Set to the target `inventory_hostname` to proceed fresh despite recovery signals |
+| `restic_volume_sentinel_enabled` | `true` | Track the primary repository's backing volume across rebuilds (local-path primary only) |
+| `restic_volume_sentinel_path` | `{{ restic_repository \| dirname }}/.restic-volume-id` | On-host sentinel file path |
+| `restic_control_volume_sentinel_file` | `{{ restic_control_dir }}/{{ restic_control_state_prefix }}.volume.sentinel-id` | Control-node sentinel pin |
+| `restic_repo_id_pin_enabled` | `true` | Record/verify each repository's `cat config` id against a control-node pin |
+| `restic_repo_id_pin_strict` | `false` | Fail (vs. warn) on a repository-identity mismatch |
+| `restic_control_primary_repo_id_file` | `…/{{ prefix }}.primary.repo-id` | Control-node primary repo-id pin |
+| `restic_control_secondary_repo_id_file` | `…/{{ prefix }}.secondary.repo-id` | Control-node secondary repo-id pin |
+
+A re-key override lives in the Password section: **`restic_allow_new_password`** —
+generate a new password despite a control-node copy (archives the old copy first).
 
 ### Backend credentials / environment
 
@@ -297,11 +308,21 @@ never silently turn into a fresh start that loses data. The full design is in
 
 | Variable | Default | Description |
 |---|---|---|
-| `restic_keep_daily` | `7` | Daily snapshots to keep |
-| `restic_keep_weekly` | `4` | Weekly snapshots to keep |
-| `restic_keep_monthly` | `12` | Monthly snapshots to keep |
-| `restic_keep_yearly` | `3` | Yearly snapshots to keep |
+| `restic_keep_daily` | `7` | Daily snapshots to keep (primary) |
+| `restic_keep_weekly` | `4` | Weekly snapshots to keep (primary) |
+| `restic_keep_monthly` | `12` | Monthly snapshots to keep (primary) |
+| `restic_keep_yearly` | `3` | Yearly snapshots to keep (primary) |
 | `restic_forget_extra_args` | `[]` | Additional flags appended to the `restic forget` command |
+| `restic_secondary_keep_daily` | `{{ restic_keep_daily }}` | Daily snapshots to keep on the secondary (off-box) |
+| `restic_secondary_keep_weekly` | `{{ restic_keep_weekly }}` | Weekly snapshots to keep on the secondary |
+| `restic_secondary_keep_monthly` | `{{ restic_keep_monthly }}` | Monthly snapshots to keep on the secondary |
+| `restic_secondary_keep_yearly` | `{{ restic_keep_yearly }}` | Yearly snapshots to keep on the secondary |
+
+Secondary retention defaults to the primary values (symmetric); set them
+independently for an **asymmetric** policy — e.g. a shorter local tail to save
+disk while the off-box copy keeps a longer history. Since `restic copy` only
+adds snapshots, the longer off-box tail is a durable last-resort even after a
+polluting fresh-start. See [RECOVERY.md](RECOVERY.md).
 
 ### Check
 

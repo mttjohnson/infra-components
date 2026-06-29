@@ -139,6 +139,15 @@ restic_control_password_file: "{{ restic_control_dir }}/{{ restic_control_state_
 # behaviour.
 restic_seed_password_from_control: true
 
+# Operator override: generate a NEW password even though the control node holds
+# a copy (a deliberate re-key / reset). The existing control-node copy is
+# ARCHIVED (<file>.<timestamp>.bak) before the new one is fetched, so the old
+# key — and access to any backups it still protects — is never destroyed. Note:
+# this generates a new password for a FRESH repository; it does NOT re-encrypt
+# an existing one (restic `key` operations are out of scope), so it is normally
+# used together with restic_force_fresh_start on a genuine reset.
+restic_allow_new_password: false
+
 # ----- Recovery safety (see RECOVERY.md) -----
 # "Blessed" marker path. The state-changing scheduled jobs (backup, copy,
 # forget, prune) refuse to run unless this file exists. It is written by the
@@ -159,6 +168,31 @@ restic_blessed_marker_path: "{{ restic_config_dir }}/blessed"
 # no password is available" hard stop, and it does NOT re-key. Leave empty to
 # keep all recovery protections active.
 restic_force_fresh_start: ""
+
+# ----- Volume sentinel -----
+# A small id file written on the repository's backing volume and pinned to the
+# control node, used to recognise the volume across rebuilds. Primary use: a
+# hard "wrong volume mounted" check — if the on-host sentinel exists but differs
+# from the control-node pin, a DIFFERENT volume is mounted than expected and the
+# role fails. When the pin exists but the on-host sentinel is absent, the volume
+# looks freshly rebuilt / unmounted; the role treats that as a recovery signal
+# and warns (it cannot, by itself, tell a rebuilt-but-mounted volume from an
+# unmounted path — use restic_require_mountpoint where `mountpoint` is reliable
+# for the hard unmounted-volume guard). Only applies to a local-path primary.
+# See RECOVERY.md.
+restic_volume_sentinel_enabled: true
+restic_volume_sentinel_path: "{{ (restic_repository | dirname) ~ '/.restic-volume-id' }}"
+restic_control_volume_sentinel_file: "{{ restic_control_dir }}/{{ restic_control_state_prefix }}.volume.sentinel-id"
+
+# ----- Repository identity pinning -----
+# Records each repository's restic `cat config` id on the control node and
+# compares it on every run. A mismatch means the role is pointed at a different
+# (or re-initialized) repository than before. Default is to warn loudly; set
+# strict to fail. Non-secret, so the pin files are committable.
+restic_repo_id_pin_enabled: true
+restic_repo_id_pin_strict: false
+restic_control_primary_repo_id_file: "{{ restic_control_dir }}/{{ restic_control_state_prefix }}.primary.repo-id"
+restic_control_secondary_repo_id_file: "{{ restic_control_dir }}/{{ restic_control_state_prefix }}.secondary.repo-id"
 
 # ----- Backend credentials / environment -----
 # Extra environment variables placed in /etc/restic/env. Use this for
@@ -192,6 +226,17 @@ restic_keep_weekly: 4
 restic_keep_monthly: 12
 restic_keep_yearly: 3
 restic_forget_extra_args: []
+
+# Secondary (off-box) retention — independent of the primary so the off-box copy
+# can keep a longer tail than the (possibly disk-constrained) local primary.
+# Because `restic copy` only ever ADDS snapshots, a longer off-box tail survives
+# a polluting fresh-start far longer than the local copy would. Defaults mirror
+# the primary (symmetric) until you set them; reduce the primary and/or raise
+# these to make retention asymmetric. See RECOVERY.md.
+restic_secondary_keep_daily: "{{ restic_keep_daily }}"
+restic_secondary_keep_weekly: "{{ restic_keep_weekly }}"
+restic_secondary_keep_monthly: "{{ restic_keep_monthly }}"
+restic_secondary_keep_yearly: "{{ restic_keep_yearly }}"
 
 # ----- Check -----
 # Weekly check is metadata-only (fast). Monthly check reads a subset of
