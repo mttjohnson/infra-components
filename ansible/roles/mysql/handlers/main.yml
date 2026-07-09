@@ -1,0 +1,12 @@
+---
+- name: mysql - start systemd service
+  ansible.builtin.service:
+    name: mysql
+    state: started
+  ignore_errors: "{{ ansible_check_mode and install_mysql.changed }}"
+
+- name: mysql - restart systemd service
+  ansible.builtin.service:
+    name: mysql
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode and install_mysql.changed }}"

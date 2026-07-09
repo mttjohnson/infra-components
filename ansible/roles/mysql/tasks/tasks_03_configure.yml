@@ -1,0 +1,229 @@
+---
+# Configuration
+
+# Data Storage
+- name: mysql - stop systemd service
+  ansible.builtin.service:
+    name: mysql
+    state: stopped
+  register: disable_default_mysql_service
+  when: install_mysql.changed
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: create directory for mysql data bind mount
+  ansible.builtin.file:
+    path: /data/mysql
+    mode: "0700"
+    owner: mysql
+    group: mysql
+    state: directory
+
+- name: Check for /data/mysql/mysql
+  ansible.builtin.stat:
+    path: /data/mysql/mysql
+  register: mysql_storage_destination
+
+- name: Check for /var/lib/mysql/mysql
+  ansible.builtin.stat:
+    path: /var/lib/mysql/mysql
+  register: mysql_storage_default
+
+- name: "check mount point /var/lib/mysql"
+  ansible.builtin.command: mountpoint /var/lib/mysql
+  register: mysql_storage_mount_stat
+  check_mode: false
+  failed_when: False
+  changed_when: False
+
+# - name: "debug - mysql_storage_mount_stat"
+#   debug:
+#     msg: "{{ mysql_storage_mount_stat }}"
+#   when:
+#     - mysql_storage_mount_stat.stdout != "/var/lib/mysql is not a mountpoint"
+# - name: "debug - mysql_storage_default"
+#   debug:
+#     msg: "{{ mysql_storage_default }}"
+#   when:
+#     - mysql_storage_default.stat.exists != true
+# - name: "debug - mysql_storage_destination"
+#   debug:
+#     msg: "{{ mysql_storage_destination }}"
+#   when:
+#     - mysql_storage_destination.stat.exists != false
+
+- name: "move default mysql install data directory to attached disk"
+  ansible.builtin.shell: "mv /var/lib/mysql/* /data/mysql/"
+  when:
+    - mysql_storage_mount_stat.stdout == "/var/lib/mysql is not a mountpoint"
+    - mysql_storage_default.stat.exists == true
+    - mysql_storage_destination.stat.exists == false
+
+- name: Setup bind mount for mysql data directory on attached disk
+  ansible.posix.mount:
+    path: /var/lib/mysql
+    src: /data/mysql
+    opts: "bind,auto,nofail"
+    state: mounted
+    fstype: none
+  notify: mysql - restart systemd service
+
+- name: create directory for mysql root data
+  ansible.builtin.file:
+    path: "{{ mysql_root_data_dir }}"
+    mode: "0700"
+    owner: root
+    group: root
+    state: directory
+
+- ansible.builtin.stat:
+    path: "{{ mysql_root_data_mycnf }}"
+  register: root_data_my_cnf_stat
+
+- name: create .my.cnf file if it does not already exist
+  ansible.builtin.file:
+    path: "{{ mysql_root_data_mycnf }}"
+    mode: "0600"
+    owner: root
+    group: root
+    state: touch
+  when: not root_data_my_cnf_stat.stat.exists
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: symlink .my.cnf file to root home
+  ansible.builtin.file:
+    src: "{{ mysql_root_data_mycnf }}"
+    dest: "{{ mysql_root_mycnf }}"
+    mode: "0600"
+    owner: root
+    group: root
+    state: link
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# Service Configuration
+- name: mysql - start systemd service
+  ansible.builtin.service:
+    name: mysql
+    state: started
+    enabled: yes
+  register: mysql_service
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# Make sure service handlers are executed here
+- name: Ensure handlers are notified now so we will be able to confirm services are responding.
+  ansible.builtin.meta: flush_handlers
+
+# Rotate MySQL root password to a new unique password
+- ansible.builtin.stat:
+    path: "{{ mysql_root_data_mycnf }}"
+  register: root_my_cnf_stat
+
+- name: Generate new unique password for mysql root user
+  ansible.builtin.shell: LC_ALL=C tr -dc 'A-Za-z0-9%&()*+,-./;<>?[]^_{}~' </dev/urandom | head -c 32
+  no_log: true
+  register: pass_mysql_root
+  check_mode: false
+  changed_when: false
+  when: not root_data_my_cnf_stat.stat.exists
+# - name: Password for mysql root user
+#   ansible.builtin.debug:
+#       msg: "{{ pass_mysql_root.stdout }}"
+#   when: not root_data_my_cnf_stat.stat.exists
+
+- name: Generate new unique password salt for mysql root user
+  ansible.builtin.shell: LC_ALL=C tr -dc 'A-Za-z0-9%&()*+,-./;<>?[]^_{}~' </dev/urandom | head -c 20
+  no_log: true
+  register: pass_salt_mysql_root
+  check_mode: false
+  changed_when: false
+  when: not root_data_my_cnf_stat.stat.exists
+# - name: Password for mysql root user
+#   ansible.builtin.debug:
+#       msg: "{{ pass_mysql_root.stdout }}"
+#   when: not root_data_my_cnf_stat.stat.exists
+
+- name: Change MySQL Root Password (tcp connections)
+  community.mysql.mysql_user:
+    host: "127.0.0.1"
+    name: root
+    plugin: caching_sha2_password
+    plugin_auth_string: "{{ pass_mysql_root.stdout }}"
+    salt: "{{ pass_salt_mysql_root.stdout }}"
+    # password: "{{ pass_mysql_root.stdout }}"
+    update_password: on_create
+    append_privs: false
+    priv: "*.*:ALL,GRANT"
+    state: present
+  register: pass_mysql_root_change
+  ignore_errors: true
+  when: not root_data_my_cnf_stat.stat.exists
+
+# - name: Change MySQL Root Password (tcp connections) (old mysql_native_password)
+#   community.mysql.mysql_user:
+#     host: "127.0.0.1"
+#     name: root
+#     password: "{{ pass_mysql_root.stdout }}"
+#     update_password: on_create
+#     append_privs: false
+#     priv: "*.*:ALL,GRANT"
+#     state: present
+#   register: pass_mysql_root_change
+#   ignore_errors: true
+#   when: not root_data_my_cnf_stat.stat.exists
+
+- name: Debugging for generated mysql root password change that failed
+  ansible.builtin.debug:
+    msg: "{{ pass_mysql_root_change }}"
+  ignore_errors: true
+  when:
+    - not root_data_my_cnf_stat.stat.exists
+    - pass_mysql_root_change.failed
+
+- name: Fail if errors occur during Change MySQL Root Password
+  ansible.builtin.fail:
+    msg: |
+      Generated password: {{ pass_mysql_root.stdout }}
+  when:
+    - not root_data_my_cnf_stat.stat.exists
+    - pass_mysql_root_change.failed
+    - not (ansible_check_mode and install_mysql.changed)
+
+- name: Setup Root .my.cnf
+  community.general.ini_file:
+    mode: "600"
+    dest: "{{ mysql_root_data_mycnf }}"
+    section: client
+    option: "{{ item.key }}"
+    value: "{{ item.value }}"
+  with_dict:
+    user: root
+    host: "127.0.0.1"
+    password: "{{ pass_mysql_root.stdout }}"
+    salt: "{{ pass_salt_mysql_root.stdout }}"
+  no_log: true
+  when: not root_data_my_cnf_stat.stat.exists
+
+- name: Change MySQL Root Password (socket connections)
+  community.mysql.mysql_user:
+    host: "localhost"
+    name: root
+    plugin: auth_socket
+    # plugin_auth_string: "{{ pass_mysql_root.stdout }}"
+    # salt: "{{ pass_salt_mysql_root.stdout }}"
+    # password: "{{ pass_mysql_root.stdout }}"
+    # update_password: always
+    append_privs: false
+    priv: "*.*:ALL,GRANT"
+    state: present
+  ignore_errors: "{{ ansible_check_mode and install_mysql.changed }}"
+  when: not root_data_my_cnf_stat.stat.exists
+# - name: Change MySQL Root Password (socket connections) (old mysql_native_password)
+#   community.mysql.mysql_user:
+#     host: "localhost"
+#     name: root
+#     password: "{{ pass_mysql_root.stdout }}"
+#     update_password: always
+#     append_privs: false
+#     priv: "*.*:ALL,GRANT"
+#     state: present
+#   ignore_errors: "{{ ansible_check_mode and install_mysql.changed }}"
+#   when: not root_data_my_cnf_stat.stat.exists

@@ -1,0 +1,12 @@
+---
+- ansible.builtin.import_tasks:
+    file: tasks_01_repo.yml
+
+- ansible.builtin.import_tasks:
+    file: tasks_02_install.yml
+
+- ansible.builtin.import_tasks:
+    file: tasks_03_configure.yml
+
+- ansible.builtin.import_tasks:
+    file: tasks_04_check.yml

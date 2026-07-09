@@ -1,0 +1,84 @@
+---
+# Get the public key used to sign the artifacts
+# ----------------------------------------------
+
+- name: Create cache directory
+  ansible.builtin.file:
+    path: "{{ mysql_cache_dir }}"
+    state: directory
+    mode: 0700
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: "{{ mysql_gpg_key_dir }}"
+    mode: 0755
+    state: directory
+
+- name: Add ASCII armored GPG key
+  ansible.builtin.copy:
+    src: mysql_gpg_pubkey.asc
+    dest: "{{ mysql_cache_dir }}/mysql_gpg_pubkey.asc"
+    mode: 0644
+
+- name: Check for GPG key
+  ansible.builtin.stat:
+    path: "{{ mysql_cache_dir }}/{{ mysql_gpg_key_file }}"
+  register: mysql_gpg_key_stat
+
+# - name: Download public key to independent keyring file
+#   ansible.builtin.command:
+#     cmd: |
+#       gpg --homedir /tmp --no-default-keyring --keyring {{ mysql_cache_dir }}/{{ mysql_gpg_key_file }} --keyserver {{ mysql_gpg_key_server }} --recv-keys {{ mysql_gpg_key_fingerprint }}
+#     creates: "{{ mysql_cache_dir }}/{{ mysql_gpg_key_file }}"
+
+- name: Dearmor and create GPG keyring file
+  ansible.builtin.shell:
+    cmd: |
+      cat "{{ mysql_cache_dir }}/mysql_gpg_pubkey.asc" | gpg --dearmor -o {{ mysql_gpg_key_dir }}/{{ mysql_gpg_key_file }}
+    creates: "{{ mysql_gpg_key_dir }}/{{ mysql_gpg_key_file }}"
+  register: mysql_dearmor_gpg_key
+
+- name: output from - Dearmor and create GPG keyring file
+  ansible.builtin.debug:
+    var: mysql_dearmor_gpg_key
+  when: not mysql_gpg_key_stat.stat.exists
+
+- name: planning to run - Make sure gpg key matches expected fingerprint
+  ansible.builtin.debug:
+    msg: |
+      gpg --homedir /tmp --no-default-keyring --keyring {{ mysql_gpg_key_dir }}/{{ mysql_gpg_key_file }} --list-keys {{ mysql_gpg_key_fingerprint }}
+  changed_when: false
+  when: not mysql_gpg_key_stat.stat.exists
+- name: Make sure gpg key matches expected fingerprint
+  ansible.builtin.shell:
+    cmd: |
+      gpg --homedir /tmp --no-default-keyring --keyring {{ mysql_gpg_key_dir }}/{{ mysql_gpg_key_file }} --list-keys {{ mysql_gpg_key_fingerprint }}
+  register: mysql_check_key_fingerprint
+  check_mode: false
+  changed_when: false
+  ignore_errors: "{{ ansible_check_mode }}"
+  when: mysql_gpg_key_stat.stat.exists
+    or not ansible_check_mode
+
+- name: Check for apt repository
+  ansible.builtin.stat:
+    path: "/etc/apt/sources.list.d/{{ mysql_repo_name }}.list"
+  register: mysql_repo_stat
+
+- name: Add apt repository
+  ansible.builtin.apt_repository:
+    repo: |
+      {{ mysql_repo_contents }}
+    state: present
+    filename: "{{ mysql_repo_name }}"
+    update_cache: true
+  register: mysql_apt_repo
+  when: not mysql_repo_stat.stat.exists
+
+- name: update apt repo cache
+  ansible.builtin.apt:
+    update_cache: yes
+  when: not mysql_repo_stat.stat.exists
+
+- name: Ensure handlers are notified now
+  ansible.builtin.meta: flush_handlers

@@ -1,0 +1,23 @@
+---
+# mysql apt repo
+mysql_cache_dir: /var/cache/ansible/mysql
+
+# https://dev.mysql.com/doc/refman/8.4/en/checking-gpg-signature.html
+# keyid A8D3785C
+mysql_gpg_key_url: xxxxx_replace_xxxxx
+mysql_gpg_key_fingerprint: A8D3785C
+mysql_gpg_key_dir: /usr/share/keyrings
+mysql_gpg_key_file: mysql-keyring.gpg
+mysql_gpg_key_server: pgp.mit.edu
+
+mysql_repo_url: https://repo.mysql.com/apt/ubuntu/
+mysql_repo_name: mysql
+mysql_repo_distribution: noble
+mysql_repo_component: mysql-8.4-lts
+# mysql_repo_contents: deb http://repo.mysql.com/apt/{debian|ubuntu}/ {bookworm|jammy} {mysql-tools|mysql-8.4-lts|mysql-8.0}
+mysql_repo_contents: deb [signed-by={{ mysql_gpg_key_dir }}/{{ mysql_gpg_key_file }}] {{ mysql_repo_url }} {{ mysql_repo_distribution }} {{ mysql_repo_component }}
+
+# mysql config
+mysql_root_mycnf: /root/.my.cnf
+mysql_root_data_dir: /data/root
+mysql_root_data_mycnf: /data/root/.my.cnf

@@ -1,0 +1,15 @@
+---
+# Confirm mysql is responding
+- name: Check mysql services are operational
+  ansible.builtin.command: "mysql -e 'show databases'"
+  register: mysql_service_check
+  check_mode: false
+  changed_when: false
+  ignore_errors: "{{ ansible_check_mode and install_mysql.changed }}"
+
+- name: Output of mysql check commands
+  ansible.builtin.debug:
+    msg: "{{ mysql_service_check }}"
+  ignore_errors: "{{ ansible_check_mode and install_mysql.changed }}"
+# mysql -e 'select host, user, grant_priv, plugin, SUBSTRING(authentication_string, -12, 12) authentication_string, password_last_changed, account_locked from mysql.user' --host=localhost --protocol=TCP
+# mysql -e 'select host, user, grant_priv, plugin, SUBSTRING(authentication_string, -12, 12) authentication_string, password_last_changed, account_locked from mysql.user' --host=localhost --protocol=SOCKET

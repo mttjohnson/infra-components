@@ -1,0 +1,14 @@
+---
+- name: mysql server - install
+  ansible.builtin.package:
+    name:
+      - mysql-server
+    state: present
+  register: install_mysql
+
+- name: mysql additional tools - install
+  ansible.builtin.package:
+    name:
+      - mysql-client
+      - python3-mysqldb
+    state: present
