@@ -77,7 +77,7 @@
     path: "{{ certbot_custom_data_dir }}"
     state: directory
     owner: root
-    group: root
+    group: "{{ certbot_cert_access_group }}"
     mode: "0755"
 
   # rsync (not copy) is required: /etc/letsencrypt/live/<domain>/*.pem are
@@ -127,7 +127,7 @@
     dest: /etc/letsencrypt
     state: link
     owner: root
-    group: root
+    group: "{{ certbot_cert_access_group }}"
     follow: false
   # In check mode the preceding sync and remove tasks are simulated, so
   # /etc/letsencrypt may still appear as a real directory and the link
