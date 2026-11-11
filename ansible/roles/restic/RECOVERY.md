@@ -112,8 +112,20 @@ in a known-good backup state." Every **state-changing** job script —
 **refuses to run when it is absent**. Read-only `check` / `check-data` jobs are not gated.
 
 The marker is written **only** when an apply blesses the host (first deploy, or a confirmed
-recovery, or an explicit override) and is **actively removed** whenever the role detects an
-unconfirmed-recovery state. Consequences:
+recovery, or an explicit override), and only at the very end of `restic_restore`. It is
+**removed up front** at both points where the host's state stops being trustworthy:
+
+- by the `restic` role, just before it re-initializes an unreadable primary while recovery is
+  expected (e.g. `/data` was rebuilt), and
+- by `restic_restore`, just before it restores any bundle,
+
+and again whenever a recovery miss is detected. So an abort *anywhere* mid-recovery — a
+restic error, a failed verification, a hook, even a failure between the two roles — leaves
+the host unblessed. (Without the up-front removal, a marker left on the root disk from
+before a `/data`-only rebuild would survive the abort and let the next backup copy partial
+state to the off-box repo as its newest snapshot.) Neither removal fires on a converged host,
+and the marker's content is deterministic (no timestamp), so a healthy host reports
+`changed=0`; the file's mtime is the time it was last blessed. Consequences:
 
 - A polluting backup of empty/fresh data cannot run, so nothing bad propagates to the NAS.
 - **Retention cannot erode snapshots while a rebuild is unresolved.** If a rebuild fails and
@@ -152,6 +164,12 @@ half-written target, can masquerade as a successful restore. Guards:
   bundle, a missing path fails loudly instead of restoring nothing.
 - **Post-restore population verification.** After restoring a required bundle, confirm the
   effective targets are populated; an empty target after a "successful" restore is an error.
+- **Never `restic snapshots --last N`.** In current restic `--last` is a deprecated *boolean*,
+  so `N` is parsed as a positional snapshot-ID prefix, and an explicit ID makes restic
+  silently **drop the `--path`/`--tag`/`--host` filters**. The query returns `[]` with exit 0
+  (or, if exactly one ID happens to start with `N`, that arbitrary snapshot). This silently
+  disabled every bundle's snapshot selection until 2026-11; the roles now list all matching
+  snapshots and pick the newest themselves, and probe with `--latest 1`.
 
 ## `restore_required` semantics
 

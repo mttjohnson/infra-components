@@ -72,10 +72,12 @@
 
 # ----- Probe: which sources are reachable? -----
 #
-# `restic snapshots --json --last 1` is the cheapest read-only call against a
+# `restic snapshots --json --latest 1` is the cheapest read-only call against a
 # repository. Non-zero exit means that source is unreachable (mount missing,
 # network down, credentials wrong). check_mode: false is safe — it mutates
 # nothing. The repo is "reachable" if at least one source answers.
+# Never use `--last 1`: `--last` is a deprecated boolean in current restic, so
+# the 1 is parsed as a snapshot-ID prefix instead of a count.
 
 - name: Probe restore source reachability
   ansible.builtin.shell:
@@ -84,7 +86,7 @@
       set -a
       . {{ item.env_file }}
       set +a
-      {{ restic_restore_binary_path }} snapshots --json --last 1 >/dev/null
+      {{ restic_restore_binary_path }} snapshots --json --latest 1 >/dev/null
   args:
     executable: /bin/bash
   register: _restic_restore_source_probe
@@ -179,7 +181,10 @@
 # the restic role and shared via set_fact; standalone runs default to no
 # enforcement. The marker is written/removed BEFORE the failure below, so a
 # recovery miss removes a stale marker (locking out backups/retention) even
-# though the play then aborts.
+# though the play then aborts. It is also removed up front — by the restic role
+# before re-initializing a primary during recovery, and by restore_bundle.yml
+# before any restore — so an abort anywhere mid-recovery leaves the host
+# unblessed (fail closed); this block is the only place it is written.
 # ============================================================================
 
 - name: Compute recovery enforcement context
@@ -194,6 +199,10 @@
          or (not _restic_restore_recovery_expected)
          or (_restic_restore_unsatisfied_critical | length == 0) }}
 
+# Content is deliberately deterministic (no timestamp) so a converged host
+# reports changed=0: the file is only rewritten when the bless state actually
+# changes, which also makes its mtime (`stat /etc/restic/blessed`) the true
+# "when was this host blessed" time.
 - name: Bless host for backups (write blessed marker)
   ansible.builtin.copy:
     content: "{{ _restic_restore_bless_record | to_nice_json }}\n"
@@ -203,7 +212,7 @@
     mode: "{{ restic_restore_blessed_marker_mode }}"
   vars:
     _restic_restore_bless_record:
-      blessed_at: "{{ ansible_facts['date_time']['iso8601'] | default('') }}"
+      managed_by: "restic_restore role; restic jobs refuse to run without this file (see restic role RECOVERY.md)"
       recovery_expected: "{{ _restic_restore_recovery_expected }}"
       fresh_start: "{{ _restic_restore_fresh_start }}"
       unsatisfied_critical: "{{ _restic_restore_unsatisfied_critical }}"

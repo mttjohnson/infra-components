@@ -95,7 +95,7 @@
       set -a
       . {{ item.env_file }}
       set +a
-      {{ restic_restore_binary_path }} snapshots --json \
+      {{ restic_restore_binary_path }} snapshots \
         {% for t in (_restic_restore_bundle.snapshot_selector.tags | default([])) %}
         --tag {{ t | quote }} \
         {% endfor %}
@@ -106,7 +106,12 @@
         {% for p in _restic_restore_selector_paths %}
         --path {{ p | quote }} \
         {% endfor %}
-        --last 0
+        --json
+  # No --last/--latest limit: list every matching snapshot and pick the newest
+  # below. Do NOT use `--last N` — in current restic `--last` is a deprecated
+  # BOOLEAN flag, so the N is parsed as a positional snapshot-ID prefix, which
+  # makes restic silently DROP the --path/--tag/--host filters (it would return
+  # `[]`, or worse, one arbitrary snapshot whose ID happens to start with N).
   args:
     executable: /bin/bash
   register: _restic_restore_src_snapshots
@@ -128,14 +133,17 @@
          + [ {
                'source': _src_result.item.name,
                'env_file': _src_result.item.env_file,
-               'snapshot': (_src_result.stdout | default('[]') | from_json | sort(attribute='time') | last)
+               'snapshot': (_src_result.stdout | default('[]', true) | from_json | sort(attribute='time') | last)
              } ] }}
   loop: "{{ _restic_restore_src_snapshots.results | default([]) }}"
   loop_control:
     loop_var: _src_result
     label: "{{ _src_result.item.name | default('?') }}"
+  # Conditions short-circuit in order: a source whose query failed (non-zero
+  # rc, empty stdout) is skipped rather than crashing the JSON parse.
   when:
-    - (_src_result.stdout | default('[]') | from_json | length) > 0
+    - (_src_result.rc | default(1)) == 0
+    - (_src_result.stdout | default('[]', true) | from_json | length) > 0
 
 - name: Pick the newest snapshot across sources (ties → primary)
   ansible.builtin.set_fact:
@@ -251,6 +259,25 @@
 # Everything below only runs when we have a snapshot AND the targets aren't
 # already populated. All tasks share the same `when:` gate.
 # ============================================================================
+
+# Fail closed for the duration of the restore: drop the blessed marker BEFORE
+# touching any target, so if anything below aborts the play (restic error,
+# empty-target verification, chmod/chown, a hook) the host is left unblessed
+# and the scheduled backup/copy/retention jobs refuse to run. Without this, a
+# marker left over from before a /data-only rebuild would survive the abort and
+# let the next backup capture partial state and copy it to the off-box repo as
+# the newest snapshot. main.yml re-blesses only after every bundle is
+# satisfied. Never fires on a converged host (nothing to restore), so it does
+# not affect idempotency. See RECOVERY.md.
+- name: Unbless host before restoring (fail closed while a restore is in progress)
+  ansible.builtin.file:
+    path: "{{ restic_restore_blessed_marker_path }}"
+    state: absent
+  when:
+    - _restic_restore_gate_ok | bool
+    - _restic_restore_repo_ok | bool
+    - _restic_restore_snapshot_resolved | bool
+    - not (_restic_restore_targets_populated | bool)
 
 - name: Run pre_restore_hook
   ansible.builtin.shell:

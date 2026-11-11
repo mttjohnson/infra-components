@@ -505,6 +505,23 @@
   check_mode: false
   when: _restic_binary_post_install.stat.exists
 
+# Fail closed before replacing the primary during a recovery: if prior backups
+# are expected but the primary is unreadable (e.g. /data was rebuilt), the
+# repository is about to be re-initialized empty. Drop any blessed marker left
+# over from before so that, should the play abort before restic_restore
+# confirms the recovery, no backup/copy/retention job can run against the
+# empty repo and push partial state to the off-box copy. restic_restore
+# re-blesses once recovery is confirmed. Never fires on a converged host (the
+# primary is readable) or a genuine first deploy (no recovery expected).
+- name: Unbless host before re-initializing the primary during recovery
+  ansible.builtin.file:
+    path: "{{ restic_blessed_marker_path }}"
+    state: absent
+  when:
+    - restic_recovery_expected | bool
+    - _restic_binary_post_install.stat.exists
+    - (_restic_cat_config | default({})).rc | default(1) != 0
+
 - name: Initialize restic repository
   ansible.builtin.command:
     cmd: "{{ restic_binary_install_dir }}/restic init"

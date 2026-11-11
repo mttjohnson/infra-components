@@ -100,6 +100,16 @@ via a host fact. After the bundle loop this role:
   removed *before* the failure, so backups and retention stay locked
   (fail-closed) until the situation is resolved — preventing both polluting
   backups and retention eroding the surviving snapshots.
+- **Removes the marker before restoring anything.** Just before the first
+  bundle restore, the marker is dropped, and it is only written back at the
+  end once every required bundle is satisfied. An abort mid-restore (restic
+  error, empty-target verification, chmod/chown, a hook) therefore leaves the
+  host unblessed rather than keeping a marker left over from before the
+  rebuild. (The `restic` role likewise drops it before re-initializing a
+  primary during recovery.) This never fires on a converged host.
+
+The marker's content is deterministic (no timestamp), so a healthy host reports
+no change; `stat /etc/restic/blessed` gives the time it was last blessed.
 
 Under `--check` the failure is downgraded to a "would fail" warning, and the
 bless/remove decision is still shown.
@@ -117,7 +127,7 @@ real action set:
   `--check`, so the inspection continues to the end. The warning is part of
   the output: the operator sees "would fail at gate" AND the full per-bundle
   plan that would follow on a healthy host.
-- **Read-only restic queries** (`snapshots --json`, `snapshots --last 1`)
+- **Read-only restic queries** (`snapshots --json`, `snapshots --latest 1`)
   are marked `check_mode: false` and `changed_when: false`. They are safe:
   they don't mutate the host or the repo.
 - **State-changing tasks** (the restic `restore`, the chmod / chown commands,
