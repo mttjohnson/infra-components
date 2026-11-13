@@ -1,4 +1,11 @@
 ---
+- name: Create Cert Access group
+  ansible.builtin.group:
+    name: "{{ certbot_cert_access_group }}"
+    system: true
+    state: present
+  register: certbot_create_access_group
+
 - name: Relocate /etc/letsencrypt onto a separate data volume
   ansible.builtin.include_tasks: relocate_data_dir.yml
   when: certbot_relocate_data_dir | bool
@@ -95,13 +102,6 @@
 
 # Cert and Key access
 # Allows group cert access managed by certbot
-
-- name: Create Cert Access group
-  ansible.builtin.group:
-    name: "{{ certbot_cert_access_group }}"
-    system: true
-    state: present
-  register: certbot_create_access_group
 
 - name: create certbot deploy hook directory
   ansible.builtin.file:
